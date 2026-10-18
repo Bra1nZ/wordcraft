@@ -868,7 +868,9 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, legacy
     let instance = (!coords.is_empty())
         .then(|| harfrust::ShaperInstance::from_variations(&hb, settings.iter().map(|(t, v)| harfrust::Variation { tag: *t, value: *v })));
     let axis = |tag: &[u8; 4]| coords.iter().find(|(t, _)| t == tag).map(|(_, v)| *v);
-    let weight = axis(b"wght").unwrap_or(if coords.is_empty() { a.weight.value() } else { style_weight(&style) });
+    // Old releases of heavy faces (Arial Black in the core fonts) claim weight 400 where current
+    // ones say 900, which Word doesn't embolden: a family named for its weight is that heavy.
+    let weight = axis(b"wght").unwrap_or(if coords.is_empty() { static_weight(a.weight.value(), &legacy_family) } else { style_weight(&style) });
     let italic = axis(b"ital")
         .map(|v| v >= 0.5)
         .or(axis(b"slnt").map(|v| v.abs() > 0.1))
@@ -926,6 +928,19 @@ fn style_weight(style: &str) -> f32 {
         ("heavy", 900.0),
     ];
     TABLE.iter().find(|(k, _)| s.contains(k)).map(|(_, w)| *w).unwrap_or(400.0)
+}
+
+/// A static face's weight: the file's, or the weight the last word of its family name stands
+/// for (`Arial Black`, `Franklin Gothic Heavy`) when the file says less than semibold.
+fn static_weight(file: f32, family: &str) -> f32 {
+    if file >= 600.0 {
+        return file;
+    }
+    match family.split_whitespace().next_back().unwrap_or("").to_ascii_lowercase().as_str() {
+        "black" | "heavy" => 900.0,
+        "extrabold" | "ultrabold" => 800.0,
+        _ => file,
+    }
 }
 
 fn style_italic(style: &str) -> bool {
@@ -1867,6 +1882,21 @@ mod tests {
         bundled.set_system_fallback(false);
         let latin = bundled.face(FALLBACK_FAMILY, "Regular");
         assert!(bundled.fallback_for_run(&chars, latin.id(), false, false).is_none());
+    }
+
+    #[test]
+    fn a_family_named_for_a_heavy_weight_is_that_heavy() {
+        let face = |bytes: &'static [u8], family: &str| {
+            make_face(FontBytes::Static(bytes), 0, family.into(), "Regular".into(), family.into(), Vec::new()).unwrap()
+        };
+        // The file says 400, as the core-fonts Arial Black does: bold must not embolden it again.
+        assert_eq!(face(BUNDLED[0], "Arial Black").weight, 900.0);
+        assert_eq!(face(BUNDLED[0], "Franklin Gothic Heavy ").weight, 900.0);
+        assert_eq!(face(BUNDLED[0], "Segoe UI ExtraBold").weight, 800.0);
+        assert_eq!(face(BUNDLED[0], "Blackadder ITC").weight, 400.0);
+        assert_eq!(face(BUNDLED[0], "Arial").weight, 400.0);
+        // A file that already says it is heavy keeps its own weight (Lato Heavy is 800, not 900).
+        assert_eq!(face(BUNDLED[1], "Source Sans 3 Heavy").weight, 600.0);
     }
 
     #[test]
