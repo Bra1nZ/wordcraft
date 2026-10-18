@@ -145,6 +145,7 @@
 	Apply to:	Appliquer à :
 	Whole document	Tout le document
 	This section	Cette section
+	Selected text	Texte sélectionné
 	Fill	Remplissage
 	Setting:	Type :
 	3-D	3-D
@@ -524,6 +525,10 @@
 	Modify…	Modifier…
 	Move or Resize	Déplacer ou redimensionner
 	Multilevel List	Liste à plusieurs niveaux
+	Multilevel List Library	Bibliothèque de listes à plusieurs niveaux
+	Article I.	Article I.
+	Chapter 1	Chapitre 1
+	Section 1.01	Section 1.01
 	Multiple Pages	Plusieurs pages
 	Name (A–Z)	Nom (A–Z)
 	Name:	Nom :
@@ -1408,6 +1413,8 @@
 	Math AutoCorrect	Correction automatique mathématique
 	More >>	Plus >>
 	Moves	Déplacements
+	Moved from:	Déplacé depuis :
+	Moved to:	Déplacé vers :
 	New document	Nouveau document
 	No changes (read only)	Aucune modification (lecture seule)
 	Only allow this kind of editing:	Autoriser uniquement ce type de modification :
@@ -1837,6 +1844,7 @@
 	Hyphenation zone:	Zone de césure :
 	Italian	Italien
 	Croatian	Croate
+	Indonesian	Indonésien
 	Japanese	Japonais
 	Korean	Coréen
 	Limit consecutive hyphens to:	Limiter les césures consécutives à :
@@ -2240,3 +2248,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Étroite
 	Medium	Moyenne
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Fusionner les cellules avant le fractionnement
+	Table size	Taille du tableau
+	AutoFit behavior	Comportement de l'ajustement automatique
+	Initial column width:	Largeur de colonne initiale :
+	AutoFit to contents	Ajustement automatique au contenu
+	AutoFit to window	Ajustement automatique à la fenêtre
+	Separate text at	Séparer le texte au niveau des
+	Commas	Virgules
+	Other:	Autre :
+	The number must be between 1 and {max}.	Le nombre doit être compris entre 1 et {max}.
+	The measurement must be between {min} and {max}.	La mesure doit être comprise entre {min} et {max}.
+	Recently Used Fonts	Polices récemment utilisées
+	All Fonts	Toutes les polices
+	Spike	Pique-notes
+	Insert Spike	Insérer le pique-notes

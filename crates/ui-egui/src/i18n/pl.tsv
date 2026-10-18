@@ -431,6 +431,10 @@
 	More templates →	Więcej szablonów →
 	Move or Resize	Przenieś lub zmień rozmiar
 	Multilevel List	Lista wielopoziomowa
+	Multilevel List Library	Biblioteka list wielopoziomowych
+	Article I.	Artykuł I.
+	Chapter 1	Rozdział 1
+	Section 1.01	Sekcja 1.01
 	Multiple Pages	Wiele stron
 	Name (A–Z)	Nazwa (A–Z)
 	Name:	Nazwa:
@@ -1329,6 +1333,7 @@
 	This font has no characters to show.	Ta czcionka nie zawiera znaków do pokazania.
 	This point forward	Od tego miejsca
 	This section	Ta sekcja
+	Selected text	Zaznaczony tekst
 	Title from the document properties	Tytuł z właściwości dokumentu
 	Total	Razem
 	Track Changes Options	Opcje śledzenia zmian
@@ -1578,6 +1583,7 @@
 	Issue	Numer
 	Italian	Włoski
 	Croatian	Chorwacki
+	Indonesian	Indonezyjski
 	Japanese	Japoński
 	Journal	Czasopismo naukowe
 	Korean	Koreański
@@ -1886,6 +1892,8 @@
 	Move Up	Przenieś w górę
 	Move with Text	Przenoś z tekstem
 	Moves	Przeniesienia
+	Moved from:	Przeniesiono z:
+	Moved to:	Przeniesiono do:
 	New comments and tracked changes are recorded under this name and these initials.	Nowe komentarze i śledzone zmiany są zapisywane pod tą nazwą i tymi inicjałami.
 	New document	Nowy dokument
 	New word	Nowy wyraz
@@ -2569,6 +2577,21 @@ preview	Title	Tytuł
 	Suggested	Sugerowane
 	Set Proofing Language…	Ustaw język sprawdzania…
 	Language Preferences…	Preferencje językowe…
+	APA	APA
+	Chicago	Chicago
+	GB/T 7714	GB/T 7714
+	GOST (name sort)	GOST (sortowanie według nazwiska)
+	GOST (title sort)	GOST (sortowanie według tytułu)
+	Harvard (Anglia)	Harvard (Anglia)
+	IEEE	IEEE
+	ISO 690 (author-date)	ISO 690 (autor–data)
+	ISO 690 (numerical)	ISO 690 (numeryczny)
+	MLA	MLA
+	SIST02	SIST02
+	Turabian	Turabian
+	Large	Duży
+	Limit and	Granica i
+	Log	Logarytm
 	Printer	Drukarka
 	Select a printer	Wybierz drukarkę
 	Refresh printers	Odśwież drukarki
@@ -2622,3 +2645,19 @@ preview	Title	Tytuł
 # Reading Mode column widths (#1040)
 	Narrow	Wąska
 	Medium	Średnia
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Scal komórki przed podziałem
+	Table size	Rozmiar tabeli
+	AutoFit behavior	Autodopasowanie
+	Initial column width:	Początkowa szerokość kolumn:
+	AutoFit to contents	Dopasuj do zawartości
+	AutoFit to window	Dopasuj do okna
+	Separate text at	Oddziel tekst przy
+	Commas	Przecinki
+	Other:	Inny:
+	The number must be between 1 and {max}.	Liczba musi być z zakresu od 1 do {max}.
+	The measurement must be between {min} and {max}.	Miara musi być z zakresu od {min} do {max}.
+	Recently Used Fonts	Ostatnio używane czcionki
+	All Fonts	Wszystkie czcionki
+	Spike	Zbieracz
+	Insert Spike	Wstaw ze zbieracza

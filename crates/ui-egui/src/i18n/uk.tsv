@@ -195,6 +195,7 @@
 	Use the Insert key to switch overtype on and off	Клавіша Insert вмикає та вимикає режим заміни
 	Whole document	Увесь документ
 	This section	Цей розділ
+	Selected text	До виділеного тексту
 	Fill	Колір заливки
 	Setting:	Тип:
 	3-D	Об'ємна
@@ -582,6 +583,10 @@
 	Modify…	Змінити…
 	Move or Resize	Перемістити або змінити розмір
 	Multilevel List	Багаторівневий список
+	Multilevel List Library	Бібліотека багаторівневих списків
+	Article I.	Стаття I.
+	Chapter 1	Глава 1
+	Section 1.01	Розділ 1.01
 	Multiple Pages	Кілька сторінок
 	Name (A–Z)	Назва (А–Я)
 	Name:	Назва:
@@ -1495,6 +1500,8 @@
 	Math AutoCorrect	Математичне автовиправлення
 	More >>	Більше >>
 	Moves	Переміщення
+	Moved from:	Переміщено звідси:
+	Moved to:	Переміщено сюди:
 	New document	Новий документ
 	No changes (read only)	Без змін (лише читання)
 	Only allow this kind of editing:	Дозволити лише такий тип редагування:
@@ -2057,6 +2064,7 @@
 	Hyphenation zone:	Зона перенесення:
 	Italian	Італійська
 	Croatian	Хорватська
+	Indonesian	Індонезійська
 	Japanese	Японська
 	Korean	Корейська
 	Limit consecutive hyphens to:	Обмежити кількість переносів поспіль:
@@ -2245,3 +2253,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Вузька
 	Medium	Середня
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Об'єднати клітинки перед розділенням
+	Table size	Розмір таблиці
+	AutoFit behavior	Добір розміру
+	Initial column width:	Початкова ширина стовпців:
+	AutoFit to contents	Добір розміру за вмістом
+	AutoFit to window	Добір розміру за шириною вікна
+	Separate text at	Розділювач тексту
+	Commas	Коми
+	Other:	Інше:
+	The number must be between 1 and {max}.	Число має бути від 1 до {max}.
+	The measurement must be between {min} and {max}.	Розмір має бути від {min} до {max}.
+	Recently Used Fonts	Нещодавно використані шрифти
+	All Fonts	Усі шрифти
+	Spike	Накопичувач
+	Insert Spike	Вставити з накопичувача

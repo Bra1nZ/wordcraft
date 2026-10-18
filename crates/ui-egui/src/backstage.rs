@@ -20,6 +20,14 @@ const PAGES: [(&str, &str); 11] = [
     ("options", "Options"),
 ];
 
+/// The Backstage back chevron's centre on macOS (#1873): beside the traffic lights in a
+/// window (the title bar's content edge), at the plain control inset in full screen, where the
+/// lights aren't docked top-left and the reserved offset would leave dead space.
+fn back_chevron_c(band_min_x: f32, center_y: f32, fullscreen: bool, content_left: f32) -> egui::Pos2 {
+    let x = if fullscreen { 26.0 } else { content_left + 3.0 };
+    pos2(band_min_x + x, center_y)
+}
+
 pub fn show(app: &mut WordApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let recovery = app.ui.backstage_page == "recover";
@@ -49,7 +57,7 @@ pub fn show(app: &mut WordApp, ui: &mut Ui) {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
                 // The chevron's stroke starts at the content edge.
-                let c = pos2(band.min.x + app.mac_titlebar.content_left + 3.0, band.center().y);
+                let c = back_chevron_c(band.min.x, band.center().y, app.session.view.full_screen, app.mac_titlebar.content_left);
                 let resp = ui.interact(Rect::from_center_size(c, vec2(22.0, band.height())), ui.id().with("backstage_back"), Sense::click());
                 icons::paint(ui.painter(), Rect::from_center_size(c, vec2(18.0, 18.0)), "chevronLeft", egui::Color32::WHITE, egui::Color32::WHITE);
                 resp
@@ -187,6 +195,9 @@ fn recovery_page(app: &mut WordApp, ui: &mut Ui) {
             ui.label(&doc.name);
             ui.label(&doc.saved_at);
             ui.add_enabled_ui(!busy, |ui| {
+                // Buttons keep the theme's own text colour: the page-wide white override is
+                // for labels on the black background and would bleach button labels (#1895).
+                ui.visuals_mut().override_text_color = None;
                 ui.horizontal(|ui| {
                     if ui.button(tl!("Restore")).clicked() {
                         let _ = app.run("file.recover", json!({"restore": doc.id}));
@@ -201,6 +212,7 @@ fn recovery_page(app: &mut WordApp, ui: &mut Ui) {
     });
     ui.add_space(20.0);
     ui.horizontal(|ui| {
+        ui.visuals_mut().override_text_color = None;
         if ui.button(tl!("Continue without restoring")).clicked() {
             let _ = app.run("ui.backstage", json!({"value": false}));
             app.canvas.want_focus = true;
@@ -486,6 +498,17 @@ mod tests {
 
     use super::matching_templates;
     use crate::{Services, WordApp};
+
+    /// #1873: the macOS back chevron sits beside the traffic lights windowed, at the plain
+    /// control inset in full screen.
+    #[test]
+    fn back_chevron_keeps_clear_of_traffic_lights_only_windowed() {
+        let windowed = super::back_chevron_c(0.0, 14.0, false, 70.0);
+        assert_eq!((windowed.x, windowed.y), (73.0, 14.0));
+        let full = super::back_chevron_c(0.0, 14.0, true, 70.0);
+        assert_eq!((full.x, full.y), (26.0, 14.0));
+        assert!(full.x < windowed.x);
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn recovery_app() -> (WordApp, std::path::PathBuf) {
@@ -809,17 +832,17 @@ mod tests {
         h.get_by_label("Close").click();
         h.run_steps(4);
         assert!(matches!(h.state().dialog, Some(crate::dialogs::Dialog::SaveChanges { .. })), "unsaved changes ask first");
-        assert!(!h.state().quit_requested);
+        assert!(h.state().has_document());
 
         h.state_mut().run("ui.saveChanges", json!({"answer": "cancel"})).unwrap();
         h.run_steps(4);
-        assert!(!h.state().quit_requested, "Cancel keeps the document open");
+        assert!(h.state().has_document(), "Cancel keeps the document open");
         assert!(h.state().ui.backstage && h.state().ui.backstage_page == "info", "Cancel leaves the Backstage as it was");
 
         h.get_by_label("Close").click();
         h.run_steps(4);
         h.state_mut().run("ui.saveChanges", json!({"answer": "dontSave"})).unwrap();
-        assert!(h.state().quit_requested, "Don't Save closes");
+        assert!(!h.state().has_document() && !h.state().quit_requested, "Don't Save closes the document, not the window (#1712)");
     }
 
     /// A document without unsaved changes closes without a prompt.
@@ -839,7 +862,7 @@ mod tests {
         h.get_by_label("Close").click();
         h.run_steps(1);
         assert!(h.state().dialog.is_none(), "no prompt");
-        assert!(h.state().quit_requested);
+        assert!(!h.state().has_document() && !h.state().quit_requested);
     }
 
     #[test]

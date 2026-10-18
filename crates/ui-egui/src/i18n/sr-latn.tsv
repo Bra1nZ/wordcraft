@@ -270,6 +270,7 @@
 	Use the Insert key to switch overtype on and off	Taster Insert uključuje i isključuje prepisivanje
 	Whole document	Ceo dokument
 	This section	Ovaj odeljak
+	Selected text	Izabrani tekst
 	Fill	Ispuna
 	Setting:	Vrsta:
 	3-D	3D
@@ -615,6 +616,10 @@
 	Modify…	Izmeni…
 	Move or Resize	Pomeri ili promeni veličinu
 	Multilevel List	Višenivoska lista
+	Multilevel List Library	Biblioteka višenivoskih lista
+	Article I.	Član I.
+	Chapter 1	Poglavlje 1
+	Section 1.01	Odeljak 1.01
 	Multiple Pages	Više strana
 	Name (A–Z)	Naziv (A–Š)
 	Name:	Naziv:
@@ -1493,6 +1498,8 @@
 	Math AutoCorrect	Automatska ispravka matematike
 	More >>	Više >>
 	Moves	Premeštanja
+	Moved from:	Premešteno odavde:
+	Moved to:	Premešteno ovde:
 	New document	Novi dokument
 	No changes (read only)	Bez izmena (samo za čitanje)
 	Only allow this kind of editing:	Dozvoli samo ovu vrstu uređivanja:
@@ -2055,6 +2062,7 @@
 	Hyphenation zone:	Zona deljenja reči:
 	Italian	Italijanski
 	Croatian	Hrvatski
+	Indonesian	Indonežanski
 	Japanese	Japanski
 	Korean	Korejski
 	Limit consecutive hyphens to:	Najviše uzastopnih crtica:
@@ -2243,3 +2251,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Uska
 	Medium	Srednja
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Spoji ćelije pre deljenja
+	Table size	Veličina tabele
+	AutoFit behavior	Automatsko uklapanje
+	Initial column width:	Početna širina kolone:
+	AutoFit to contents	Automatski uklopi prema sadržaju
+	AutoFit to window	Automatski uklopi prema prozoru
+	Separate text at	Razdvoji tekst na
+	Commas	Zarezi
+	Other:	Drugo:
+	The number must be between 1 and {max}.	Broj mora biti između 1 i {max}.
+	The measurement must be between {min} and {max}.	Mera mora biti između {min} i {max}.
+	Recently Used Fonts	Nedavno korišćeni fontovi
+	All Fonts	Svi fontovi
+	Spike	Sakupljač
+	Insert Spike	Umetni iz sakupljača

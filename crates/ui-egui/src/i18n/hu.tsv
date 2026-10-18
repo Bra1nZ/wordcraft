@@ -440,6 +440,10 @@
 	Modify Style	Stílus módosítása
 	Modify…	Módosítás…
 	Multilevel List	Többszintű lista
+	Multilevel List Library	Többszintű listák tára
+	Article I.	I. cikk
+	Chapter 1	1. fejezet
+	Section 1.01	1.01. szakasz
 	Multiple Pages	Több oldal
 	Name (A–Z)	Név (A–Z)
 	Name:	Név:
@@ -1642,6 +1646,7 @@
 	Apply to:	Alkalmazás erre:
 	Whole document	Teljes dokumentum
 	This section	Ez a szakasz
+	Selected text	Kijelölt szöveg
 	Fill	Kitöltés
 	Setting:	Beállítás:
 	3-D	Térhatású
@@ -1863,6 +1868,8 @@
 	Math AutoCorrect	Matematikai automatikus javítás
 	More >>	Több >>
 	Moves	Áthelyezések
+	Moved from:	Áthelyezve innen:
+	Moved to:	Áthelyezve ide:
 	New document	Új dokumentum
 	No changes (read only)	Nincs módosítás (csak olvasható)
 	Only allow this kind of editing:	Csak ez a fajta szerkesztés engedélyezett:
@@ -2202,6 +2209,7 @@
 	Hyphenation zone:	Elválasztási zóna:
 	Italian	Olasz
 	Croatian	Horvát
+	Indonesian	Indonéz
 	Japanese	Japán
 	Korean	Koreai
 	Limit consecutive hyphens to:	Egymást követő elválasztások legfeljebb:
@@ -2628,3 +2636,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Keskeny
 	Medium	Közepes
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Cellák egyesítése felosztás előtt
+	Table size	Táblázat mérete
+	AutoFit behavior	Automatikus igazítás
+	Initial column width:	Kezdeti oszlopszélesség:
+	AutoFit to contents	Igazítás a tartalomhoz
+	AutoFit to window	Igazítás az ablakhoz
+	Separate text at	Szöveg elválasztása
+	Commas	Vesszők
+	Other:	Egyéb:
+	The number must be between 1 and {max}.	A számnak 1 és {max} között kell lennie.
+	The measurement must be between {min} and {max}.	A méretnek {min} és {max} között kell lennie.
+	Recently Used Fonts	Legutóbb használt betűtípusok
+	All Fonts	Összes betűtípus
+	Spike	Gyűjtő
+	Insert Spike	Beszúrás a gyűjtőből

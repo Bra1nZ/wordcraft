@@ -16,9 +16,10 @@ const USAGE: &str = "\
 wordcraft-cli — WordCraft from the command line
 
 USAGE:
-  wordcraft-cli convert <in> <out> [--markup] [--format wordml2003|flatopc]
+  wordcraft-cli convert <in> <out> [--markup] [--update-fields] [--format wordml2003|flatopc]
                                               convert between formats (docx, doc [read], pdf, odt, rtf, html, md, tex, txt, json, png,
-                                              xml); an .xml file is a Word XML Document (Flat OPC), or with
+                                              xml); --update-fields refreshes unlocked fields before saving;
+                                              an .xml file is a Word XML Document (Flat OPC), or with
                                               --format wordml2003 a Word 2003 XML Document;
                                               --markup (Print Markup): comments beside each page and
                                               tracked changes in pdf/png, a comment list in html/md/txt
@@ -280,6 +281,7 @@ const PASSWORD_OPTIONS: &[OptionSpec] =
 const CONVERT_OPTIONS: &[OptionSpec] = &[
     OptionSpec { name: "--markup", takes_value: false },
     OptionSpec { name: "--format", takes_value: true },
+    OptionSpec { name: "--update-fields", takes_value: false },
     OptionSpec { name: "--password", takes_value: true },
     OptionSpec { name: "--password-file", takes_value: true },
 ];
@@ -378,6 +380,9 @@ fn run<S: AsRef<OsStr>>(args: &[S]) -> Result<(), Failure> {
             let markup = rest.iter().any(|a| a == "--markup");
             let password = password_from(&rest)?;
             let mut s = open(&i, password.as_deref())?;
+            if rest.iter().any(|a| a == "--update-fields") {
+                s.run("references.updateFields", &json!({})).map_err(|e| e.to_string())?;
+            }
             let r = if o.to_ascii_lowercase().ends_with(".png") {
                 s.run("file.exportPng", &json!({"path": o, "page": 1, "markup": markup}))
             } else {

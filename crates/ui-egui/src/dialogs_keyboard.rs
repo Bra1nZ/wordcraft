@@ -106,6 +106,11 @@ pub(crate) fn list(ui: &mut Ui, id: &str, size: egui::Vec2, rows: &[(String, Str
     egui::Frame::new().stroke(ui.visuals().widgets.noninteractive.bg_stroke).inner_margin(2.0).show(ui, |ui| {
         ui.set_width(size.x);
         ui.set_height(size.y);
+        if rows.is_empty() {
+            // #1905: an empty list says so instead of a blank box.
+            ui.centered_and_justified(|ui| ui.label(egui::RichText::new(tl!("(none)")).weak()));
+            return;
+        }
         let row_h = ui.text_style_height(&egui::TextStyle::Body) + 4.0;
         egui::ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show_rows(ui, row_h, rows.len(), |ui, range| {
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
@@ -288,5 +293,47 @@ mod tests {
         let mut c = app();
         c.apply_prefs(serde_json::from_str(r#"{"keyboard": {"assigned": {"Mod+Q": "gone.command", "Bad+": 1}, "removed": 7}}"#).unwrap());
         assert!(c.session.keymap.is_empty());
+    }
+
+    /// #1905: a command with no shortcut shows (none) instead of a blank keys box.
+    #[test]
+    fn keys_list_without_shortcuts_says_none() {
+        use super::customize_keyboard;
+
+        let app = || WordApp::new(Session::new(wordcraft_doc::Document::new()), Services::default());
+        let mut a = app();
+        a.run("tools.customizeKeyboard", json!({})).unwrap();
+        let id = a
+            .session
+            .registry
+            .all()
+            .iter()
+            .find(|s| a.session.keymap.keys_for(&a.session.registry, s.id).is_empty())
+            .map(|s| s.id.to_string())
+            .expect("a command with no shortcut");
+        let mut form = match a.dialog.take() {
+            Some(crate::dialogs::Dialog::CustomizeKeyboard { form }) => form,
+            _ => panic!("expected the Customize Keyboard dialog"),
+        };
+        form.command = id;
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::apply(&ctx, crate::theme::Appearance::Light);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).drop_without_applying_deltas();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            customize_keyboard(&mut a, ui, &mut form);
+        });
+        output.textures_delta.clear();
+        a.dialog = Some(crate::dialogs::Dialog::CustomizeKeyboard { form });
+        let texts: Vec<String> = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("(none)")), "empty keys list says (none)");
     }
 }

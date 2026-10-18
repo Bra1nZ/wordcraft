@@ -214,6 +214,7 @@
 	Use the Insert key to switch overtype on and off	使用 Insert 鍵切換取代模式
 	Whole document	整份文件
 	This section	本節
+	Selected text	選取的文字
 	Fill	填滿
 	Setting:	設定：
 	3-D	立體
@@ -568,6 +569,10 @@
 	Modify…	修改…
 	Move or Resize	移動或調整大小
 	Multilevel List	多層次清單
+	Multilevel List Library	多層次清單庫
+	Article I.	第 I 條
+	Chapter 1	第 1 章
+	Section 1.01	第 1.01 節
 	Multiple Pages	多頁
 	Name (A–Z)	名稱（A–Z）
 	Name:	名稱：
@@ -1484,6 +1489,8 @@
 	Math AutoCorrect	數學自動校正
 	More >>	更多 >>
 	Moves	移動
+	Moved from:	移動自:
+	Moved to:	移動到:
 	New document	新文件
 	No changes (read only)	不允許任何變更 (唯讀)
 	Only allow this kind of editing:	僅允許此類編輯:
@@ -2046,6 +2053,7 @@
 	Hyphenation zone:	斷字區：
 	Italian	義大利文
 	Croatian	克羅埃西亞文
+	Indonesian	印尼文
 	Japanese	日文
 	Korean	韓文
 	Limit consecutive hyphens to:	連續斷字數上限：
@@ -2234,3 +2242,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	窄
 	Medium	中等
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	分割前合併儲存格
+	Table size	表格大小
+	AutoFit behavior	自動調整行為
+	Initial column width:	初始欄寬：
+	AutoFit to contents	依內容自動調整
+	AutoFit to window	依視窗自動調整
+	Separate text at	分隔文字於
+	Commas	逗號
+	Other:	其他：
+	The number must be between 1 and {max}.	數字必須介於 1 和 {max} 之間。
+	The measurement must be between {min} and {max}.	度量值必須介於 {min} 和 {max} 之間。
+	Recently Used Fonts	最近使用的字型
+	All Fonts	所有字型
+	Spike	收集區
+	Insert Spike	插入收集區

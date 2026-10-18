@@ -5,6 +5,7 @@ pub(crate) mod diagram;
 mod drawing_color;
 mod embed;
 mod freeform;
+mod glossary;
 pub(crate) mod math;
 mod props;
 mod sdt;
@@ -286,6 +287,7 @@ pub(crate) fn read_opened(pkg: &Package) -> Result<Document, DocxError> {
         r.doc.passthrough.insert(VBA_PROJECT_PART.into(), Arc::new(b.to_vec()));
         r.read_vba_related(&v);
     }
+    r.read_glossary(&rels);
     r.keep_custom_xml(&root_rels, &rels);
     r.keep_unmodelled(&root_rels, &rels);
     if !r.embedded.parts.is_empty() {
@@ -816,9 +818,6 @@ impl Reader<'_> {
         for s in root.children("w:style").take(10_000) {
             let Some(raw_id) = s.attr("w:styleId").filter(|i| !i.is_empty()) else { continue };
             let id = self.pc.style_id(raw_id);
-            if sheet.get(&id).is_some() {
-                continue;
-            }
             let kind = match s.attr("w:type").unwrap_or("paragraph") {
                 "character" => StyleKind::Character,
                 "table" => StyleKind::Table,
@@ -860,7 +859,13 @@ impl Reader<'_> {
                 let parts = self.table_style_parts(s, &mut st);
                 st.table = (parts != TableStyleParts::default()).then_some(parts);
             }
-            sheet.styles.push(st);
+            // A style defined twice (some generators write their own Heading 1 after a
+            // placeholder one) is the last definition, whole: Word drops the earlier one rather
+            // than merging the two (observed with synthetic documents).
+            match sheet.styles.iter_mut().find(|s| s.id == id) {
+                Some(earlier) => *earlier = st,
+                None => sheet.styles.push(st),
+            }
         }
         // Styles that give only a list level take the list from the style they are based on
         // (Heading 3: level 3 of Heading 2's outline list).
@@ -1083,6 +1088,7 @@ impl Reader<'_> {
                     s.sum_paragraph_spacing = k.children("w:doNotUseHTMLParagraphAutoSpacing").any(on_off);
                 }
                 "w:trackRevisions" => s.track_changes = on_off(k),
+                "w:doNotTrackMoves" => s.track_moves = !on_off(k),
                 "w:defaultTabStop" => {
                     if let Some(v) = tw(k, "w:val").filter(|v| *v > 0.0) {
                         s.default_tab = v.clamp(1.0, 1584.0);

@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
         .params(r#"{"to": "endnote" (footnotes become endnotes) | "footnote" (endnotes become footnotes) | "swap"}"#),
         CommandSpec::new("references.nextFootnote", "Next Footnote", "References › Footnotes", |s, _| {
             let caret = s.sel.focus.clone();
-            let refs = note_refs(s);
+            let refs = note_refs(s, Some(NoteKind::Footnote));
             if let Some(p) = refs.iter().find(|p| **p > caret).or(refs.first()) {
                 s.sel = Selection::caret(p.clone());
             }
@@ -74,11 +74,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("references.caption", "Insert Caption", "References › Captions", caption)
             .params(r#"{"label"?: "Figure|Table|Equation|any label", "text"?: string, "position"?: "below|above", "excludeLabel"?: bool, "format"?: "ARABIC|alphabetic|ALPHABETIC|roman|ROMAN", "chapter"?: heading level 1-9, "separator"?: "-|.|:|—|–"}"#),
         // F9: update fields; the selected ones that showed their code show their result again.
-        CommandSpec::new("references.updateFields", "Update Field", "References", |s, _| {
-            update_fields(s)?;
+        CommandSpec::new("references.updateFields", "Update Field", "References", |s, v| {
+            update_fields_in(s, v.get("all").and_then(Value::as_bool).unwrap_or(false))?;
             super::fields::show_results(s)?;
             sel_result(s)
         })
+        .params(r#"{"all"?: bool (the body and every header, footer, note and text box, wherever the caret is; default: the story the caret is in)}"#)
         .key("F9"),
     ]
 }
@@ -231,7 +232,7 @@ struct TocEntry {
 /// breaks): what Insert › Link › Place in This Document lists.
 pub(crate) fn headings(s: &Session) -> Vec<(usize, u8, String, usize)> {
     let f = FieldCode::parse("TOC \\o \"1-9\" \\u");
-    toc_entries(s, &f).into_iter().map(|e| (e.path.last(), e.level.saturating_add(1), e.text, e.lead)).collect()
+    toc_entries(s, &f).into_iter().filter(|e| e.path.depth() == 0).map(|e| (e.path.last(), e.level.saturating_add(1), e.text, e.lead)).collect()
 }
 
 /// The heading level (1–9) of a built-in heading style.
@@ -272,9 +273,6 @@ fn toc_entries(s: &Session, f: &FieldCode) -> Vec<TocEntry> {
                 LevelSuffix::Space => format!("{label} "),
                 LevelSuffix::Nothing => label,
             });
-        if path.depth() > 0 {
-            continue;
-        }
         let style = p.props.style.as_deref().unwrap_or("Normal");
         if style.starts_with("TOC") {
             continue;
@@ -461,8 +459,12 @@ fn insert_toc(s: &mut Session, v: &Value) -> CmdResult {
 /// A hidden `_Toc` bookmark around the heading at body block `i` (after its leading page breaks),
 /// reusing one already there; its name.
 pub(crate) fn toc_bookmark(s: &mut Session, i: usize, lead: usize) -> Result<String, CmdError> {
+    bookmark_heading(s, &Path::top(i), lead)
+}
+
+fn bookmark_heading(s: &mut Session, path: &Path, lead: usize) -> Result<String, CmdError> {
     const MARK: usize = wordcraft_doc::para::OBJ.len_utf8();
-    let para = s.doc.para(StoryRef::Body, &Path::top(i)).ok_or_else(|| CmdError::Failed("heading is gone".into()))?;
+    let para = s.doc.para(StoryRef::Body, path).ok_or_else(|| CmdError::Failed("heading is gone".into()))?;
     if let Some(InlineObject::BookmarkStart { name }) = para.object_at(lead)
         && name.starts_with("_Toc")
     {
@@ -473,12 +475,12 @@ pub(crate) fn toc_bookmark(s: &mut Session, i: usize, lead: usize) -> Result<Str
     let name = format!("_Toc{next:09}");
     let end = para.len();
     let props = CharProps::default();
-    let pos = |off| Pos { story: StoryRef::Body, path: Path::top(i), off };
+    let pos = |off| Pos { story: StoryRef::Body, path: path.clone(), off };
     s.doc.insert_object(&pos(end), InlineObject::BookmarkEnd { name: name.clone() }, &props)?;
     s.doc.insert_object(&pos(lead), InlineObject::BookmarkStart { name: name.clone() }, &props)?;
     // The caret in that paragraph stays on the same text.
     let shift = |p: &mut Pos| {
-        if p.story == StoryRef::Body && p.path == Path::top(i) {
+        if p.story == StoryRef::Body && &p.path == path {
             if p.off > end {
                 p.off = p.off.saturating_add(2 * MARK);
             } else if p.off >= lead && p.off > 0 {
@@ -538,7 +540,7 @@ fn regenerate_toc(s: &mut Session, leader: Option<TabLeader>) -> Result<(), CmdE
         for e in &entries {
             // TC fields link to their paragraph's start.
             let lead = s.doc.para(StoryRef::Body, &e.path).map_or(0, |p| p.text.bytes().take_while(|b| *b == 0x0C).count());
-            v.push(Some(format!("#{}", toc_bookmark(s, e.path.last(), lead)?)));
+            v.push(Some(format!("#{}", bookmark_heading(s, &e.path, lead)?)));
         }
         v
     } else {
@@ -559,7 +561,12 @@ fn regenerate_toc(s: &mut Session, leader: Option<TabLeader>) -> Result<(), CmdE
         }
         let shift = if pass == 0 { 0 } else { entries.len() };
         for (k, e) in entries.iter().enumerate() {
-            let target = Path::top(e.path.last() + if e.path.last() > start { shift } else { 0 });
+            let mut target = e.path.clone();
+            if let Some(top) = target.0.first_mut()
+                && (*top as usize) > start
+            {
+                *top = top.saturating_add(u32::try_from(shift).unwrap_or(u32::MAX));
+            }
             let page =
                 l.caret(&Pos { story: StoryRef::Body, path: target, off: e.lead }).and_then(|c| l.pages.get(c.page)).map(|pg| pg.number).unwrap_or(1);
             let show_page = no_pages.is_none_or(|(a, b)| !(a..=b).contains(&(e.level + 1)));
@@ -719,12 +726,14 @@ pub(super) fn note_options(s: &mut Session, v: &Value) -> CmdResult {
     }))
 }
 
-fn note_refs(s: &Session) -> Vec<Pos> {
+fn note_refs(s: &Session, kind: Option<NoteKind>) -> Vec<Pos> {
     let mut v = Vec::new();
     for path in s.doc.para_paths(StoryRef::Body) {
         let Some(p) = s.doc.para(StoryRef::Body, &path) else { continue };
         for o in p.object_offsets() {
-            if matches!(p.object_at(o), Some(InlineObject::NoteRef { .. })) {
+            if let Some(InlineObject::NoteRef { kind: k, .. }) = p.object_at(o)
+                && (kind.is_none() || kind == Some(*k))
+            {
                 v.push(Pos { story: StoryRef::Body, path: path.clone(), off: o });
             }
         }
@@ -851,17 +860,49 @@ pub fn update_seq(s: &mut Session) -> Result<(), CmdError> {
     Ok(())
 }
 
-/// Update fields in the body: dates, SEQ numbering, cross-references, TOC.
+/// Whether `instr` has the one-letter switch `\sw`, also run together with another (`\p\h`).
+fn has_switch(instr: &str, sw: char) -> bool {
+    instr.split('\\').skip(1).any(|s| {
+        let mut chars = s.chars();
+        chars.next().is_some_and(|c| c.eq_ignore_ascii_case(&sw)) && chars.next().is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
+/// Update fields of the story being edited, as Word's F9 does: dates, REF/PAGEREF, TITLE, AUTHOR
+/// and NUMWORDS in the body, or in the header, footer, note or text box the caret is in (the body's
+/// fields stay as they are then). SEQ numbering, citations and TOC are body-only, so they run only
+/// when the caret is in the body.
 pub fn update_fields(s: &mut Session) -> Result<(), CmdError> {
-    update_seq(s)?;
-    let mut pages: std::collections::HashMap<String, u32> = Default::default();
-    for (name, pos) in s.doc.bookmarks() {
-        let l = s.layout();
-        let page = l.caret(&pos).and_then(|c| l.pages.get(c.page)).map(|p| p.number).unwrap_or(1);
-        pages.entry(name).or_insert(page);
+    update_fields_in(s, false)
+}
+
+/// [`update_fields`], or with `all` the whole document: the body (with SEQ, citations and TOC) and
+/// every part story, wherever the caret is (what printing needs).
+pub fn update_fields_in(s: &mut Session, all: bool) -> Result<(), CmdError> {
+    let caret_story = s.sel.focus.story;
+    let in_body = all || caret_story == StoryRef::Body;
+    if in_body {
+        update_seq(s)?;
     }
-    for path in s.doc.para_paths(StoryRef::Body) {
-        let Some(p) = s.doc.para(StoryRef::Body, &path) else { continue };
+    let mut pages: std::collections::HashMap<String, (u32, NumFormat)> = Default::default();
+    let formats: Vec<NumFormat> = s.doc.sections().into_iter().map(|(_, sec)| sec.page_num_format).collect();
+    let marks = s.doc.bookmarks();
+    for (name, pos) in marks {
+        let l = s.layout();
+        let page_info = l
+            .caret(&pos)
+            .and_then(|c| l.pages.get(c.page))
+            .map(|p| {
+                let format = formats.get(p.section).copied().unwrap_or_default();
+                (p.number, format)
+            })
+            .unwrap_or((1, NumFormat::Decimal));
+        pages.entry(name).or_insert(page_info);
+    }
+    let stories: Vec<StoryRef> =
+        if all { std::iter::once(StoryRef::Body).chain(s.doc.parts.keys().map(|k| StoryRef::Part(*k))).collect() } else { vec![caret_story] };
+    for (story, path) in stories.into_iter().flat_map(|st| s.doc.para_paths(st).into_iter().map(move |p| (st, p))).collect::<Vec<_>>() {
+        let Some(p) = s.doc.para(story, &path) else { continue };
         if !p.objects.iter().any(|o| matches!(o, InlineObject::Field { .. })) {
             continue;
         }
@@ -889,8 +930,18 @@ pub fn update_fields(s: &mut Session) -> Result<(), CmdError> {
                     updates.push((k, super::insert::format_date(&pic)));
                 }
                 "REF" | "PAGEREF" => {
-                    let target = instr.split_whitespace().nth(1).unwrap_or("");
-                    let r = if name == "REF" { bookmark_text(&s.doc, target) } else { pages.get(target).map(u32::to_string) };
+                    let f = FieldCode::parse(instr);
+                    let target = f.args.first().map(|s| s.split('\\').next().unwrap_or("").trim_matches('"')).unwrap_or("");
+                    let r = if name == "REF" {
+                        if !has_switch(instr, 'p') { bookmark_text(&s.doc, target) } else { None }
+                    } else if !has_switch(instr, 'p') {
+                        pages.get(target).map(|(num, page_fmt)| {
+                            let fmt = wordcraft_layout::fields::format_switch(instr).unwrap_or(*page_fmt);
+                            fmt.format(*num)
+                        })
+                    } else {
+                        None
+                    };
                     if let Some(r) = r {
                         updates.push((k, r));
                     }
@@ -904,7 +955,7 @@ pub fn update_fields(s: &mut Session) -> Result<(), CmdError> {
         if updates.is_empty() {
             continue;
         }
-        let para = s.doc.para_mut(StoryRef::Body, &path)?;
+        let para = s.doc.para_mut(story, &path)?;
         for (k, r) in updates {
             if let Some(InlineObject::Field { result, dirty, .. }) = para.objects.get_mut(k) {
                 // A computed result is no longer stale: Word's F9 clears `w:dirty` too.
@@ -913,6 +964,9 @@ pub fn update_fields(s: &mut Session) -> Result<(), CmdError> {
             }
         }
         para.touch();
+    }
+    if !in_body {
+        return Ok(());
     }
     super::citations::update_citations(s)?;
     update_toc(s)
@@ -1146,5 +1200,106 @@ mod tests {
         s.run("caret.docEnd", &json!({})).unwrap();
         s.run("references.caption", &json!({"label": "Table", "excludeLabel": true, "format": "ROMAN"})).unwrap();
         assert_eq!(s.doc.body.last().unwrap().as_para().unwrap().plain_text(), "I");
+    }
+
+    #[test]
+    fn update_fields_ref_and_pageref() {
+        let mut s = Session::new(wordcraft_doc::Document::from_text("Bookmark target text here.\nSecond paragraph."));
+        s.run("select.text", &json!({"text": "Bookmark target text"})).unwrap();
+        s.run("insert.bookmark", &json!({"name": "TargetMark"})).unwrap();
+        s.run("caret.docEnd", &json!({})).unwrap();
+        s.run("insert.field", &json!({"instr": "REF \"TargetMark\" \\h", "result": "old"})).unwrap();
+        s.run("insert.field", &json!({"instr": "REF TargetMark\\h", "result": "old"})).unwrap();
+        s.run("insert.field", &json!({"instr": "PAGEREF \"TargetMark\" \\* Roman", "result": "0"})).unwrap();
+        s.run("insert.field", &json!({"instr": "PAGEREF TargetMark \\p", "result": "above"})).unwrap();
+        s.run("insert.field", &json!({"instr": "REF TargetMark \\p", "result": "above"})).unwrap();
+
+        update_fields(&mut s).unwrap();
+
+        let res: Vec<(String, String)> = fields(&s);
+        assert_eq!(res[0], ("REF \"TargetMark\" \\h".into(), "Bookmark target text".into()));
+        assert_eq!(res[1], ("REF TargetMark\\h".into(), "Bookmark target text".into()));
+        assert_eq!(res[2], ("PAGEREF \"TargetMark\" \\* Roman".into(), "I".into()));
+        assert_eq!(res[3], ("PAGEREF TargetMark \\p".into(), "above".into()));
+        assert_eq!(res[4], ("REF TargetMark \\p".into(), "above".into()));
+    }
+
+    /// A document with a body AUTHOR field and a header holding AUTHOR, NUMWORDS and a locked TITLE,
+    /// all stale; the author is "Ada".
+    fn doc_with_header_fields() -> (wordcraft_doc::Document, u32) {
+        use wordcraft_doc::{CharProps, Paragraph, PartKind};
+        let field = |instr: &str, locked: bool| InlineObject::Field {
+            instr: instr.into(),
+            result: "stale".into(),
+            locked,
+            dirty: false,
+            code: false,
+            form: String::new(),
+        };
+        let mut doc = wordcraft_doc::Document::from_text("one two three");
+        doc.core.creator = "Ada".into();
+        let mut p = Paragraph::new();
+        for (instr, locked) in [("AUTHOR", false), ("NUMWORDS", false), ("TITLE", true)] {
+            let off = p.len();
+            p.insert_object(off, field(instr, locked), &CharProps::default()).unwrap();
+        }
+        let body_path = doc.para_paths(StoryRef::Body).remove(0);
+        doc.para_mut(StoryRef::Body, &body_path).unwrap().insert_object(0, field("AUTHOR", false), &CharProps::default()).unwrap();
+        let hdr = doc.add_part(PartKind::Header, vec![std::sync::Arc::new(wordcraft_doc::Block::Para(p))]);
+        (doc, hdr)
+    }
+
+    fn story_fields(s: &Session, story: StoryRef) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for path in s.doc.para_paths(story) {
+            for o in &s.doc.para(story, &path).unwrap().objects {
+                if let InlineObject::Field { instr, result, .. } = o {
+                    out.push((instr.clone(), result.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    /// #1706 (Word check): Update Field with the caret in the body leaves a header's fields alone.
+    #[test]
+    fn update_fields_in_the_body_leaves_headers_alone() {
+        let (doc, hdr) = doc_with_header_fields();
+        let mut s = Session::new(doc);
+        s.run("references.updateFields", &json!({})).unwrap();
+        assert_eq!(story_fields(&s, StoryRef::Body)[0], ("AUTHOR".to_string(), "Ada".to_string()));
+        assert!(story_fields(&s, StoryRef::Part(hdr)).iter().all(|(_, r)| r == "stale"), "{:?}", story_fields(&s, StoryRef::Part(hdr)));
+    }
+
+    /// #1706: with the caret in a header (or other part), Update Field refreshes that part's
+    /// fields, but not locked ones and not the body's.
+    #[test]
+    fn update_fields_in_a_header_updates_that_header() {
+        let (doc, hdr) = doc_with_header_fields();
+        let mut s = Session::new(doc);
+        let path = s.doc.para_paths(StoryRef::Part(hdr)).remove(0);
+        s.sel = crate::session::Selection::caret(Pos::new(StoryRef::Part(hdr), path, 0));
+        s.run("references.updateFields", &json!({})).unwrap();
+        let got = story_fields(&s, StoryRef::Part(hdr));
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert_eq!(got[0].1, "Ada");
+        assert_eq!(got[1].1, s.doc.word_count().to_string());
+        assert_eq!(got[2].1, "stale", "a locked field stays as it was");
+        assert!(story_fields(&s, StoryRef::Body).iter().all(|(_, r)| r == "stale"), "the body is not touched");
+    }
+
+    /// #1706: `all: true` (printing) updates the whole document even with the caret in a header.
+    #[test]
+    fn update_fields_all_covers_every_story() {
+        let (doc, hdr) = doc_with_header_fields();
+        let mut s = Session::new(doc);
+        let path = s.doc.para_paths(StoryRef::Part(hdr)).remove(0);
+        s.sel = crate::session::Selection::caret(Pos::new(StoryRef::Part(hdr), path, 0));
+        s.run("references.updateFields", &json!({"all": true})).unwrap();
+        let got = story_fields(&s, StoryRef::Part(hdr));
+        assert_eq!((got[0].1.as_str(), got[2].1.as_str()), ("Ada", "stale"), "{got:?}");
+        assert_eq!(story_fields(&s, StoryRef::Body)[0].1, "Ada");
+        // Junk values fall back to the caret's story.
+        s.run("references.updateFields", &json!({"all": "yes"})).unwrap();
     }
 }

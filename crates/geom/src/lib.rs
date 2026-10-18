@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 mod region;
 pub use region::Region;
+mod pixels;
+pub use pixels::{MAX_DECODED_BYTES, MAX_RASTER_PIXELS, decode_fits, fit_pixels, rgba_bytes, rgba_fits};
 
 /// Points per inch.
 pub const PT_PER_IN: f32 = 72.0;

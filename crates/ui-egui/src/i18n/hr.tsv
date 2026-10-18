@@ -1365,6 +1365,10 @@ template	Letter	Pismo
 	Moved to	Premješteno u
 	Moves	Premještanja
 	Multilevel List	Višerazinski popis
+	Multilevel List Library	Biblioteka višerazinskih popisa
+	Article I.	Članak I.
+	Chapter 1	Poglavlje 1
+	Section 1.01	Odjeljak 1.01
 	Multiple Pages	Više stranica
 	Name	Naziv
 	Name (A–Z)	Naziv (A–Ž)
@@ -2257,6 +2261,7 @@ template	Letter	Pismo
 	This password type isn't supported.	Ova vrsta lozinke nije podržana.
 	This point forward	Od ove točke nadalje
 	This section	Ovaj odjeljak
+	Selected text	Odabrani tekst
 	Three	Tri
 	Through	Kroz
 	Tight	Usko
@@ -2512,6 +2517,7 @@ preview	Title	Naslov
 	Contains	Sadrži
 	Copy to	Kopiraj u
 	Croatian	Hrvatski
+	Indonesian	Indonezijski
 	Custom size	Prilagođena veličina
 	Delete Bookmark	Izbriši knjižnu oznaku
 	Descending	Silazno
@@ -2632,3 +2638,21 @@ preview	Title	Naslov
 	Bottom Right Cell	Donja desna ćelija
 	Inside Horizontal Border	Unutarnji vodoravni obrub
 	Inside Vertical Border	Unutarnji okomiti obrub
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Spoji ćelije prije razdvajanja
+	Table size	Veličina tablice
+	AutoFit behavior	Automatsko prilagođavanje
+	Initial column width:	Početna širina stupca:
+	AutoFit to contents	Prilagodi sadržaju
+	AutoFit to window	Prilagodi prozoru
+	Separate text at	Odvoji tekst na
+	Commas	Zarezi
+	Other:	Ostalo:
+	The number must be between 1 and {max}.	Broj mora biti između 1 i {max}.
+	The measurement must be between {min} and {max}.	Mjera mora biti između {min} i {max}.
+	Recently Used Fonts	Nedavno korišteni fontovi
+	All Fonts	Svi fontovi
+	Moved from:	Premješteno iz:
+	Moved to:	Premješteno u:
+	Spike	Skupljač
+	Insert Spike	Umetni iz skupljača

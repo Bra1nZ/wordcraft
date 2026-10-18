@@ -159,6 +159,11 @@ fn table(s: &mut Session, v: &Value) -> CmdResult {
         let id = s.doc.styles.find(st).map(|x| x.id.clone()).ok_or_else(|| CmdError::Params(format!("no table style `{st}`")))?;
         t.props.style = Some(id);
     }
+    // Like Word, a table inserted in a right-to-left paragraph is a right-to-left table (#2634):
+    // its first cell stands at the right, so Tab, which follows reading order, moves leftwards.
+    if s.doc.para_at(&s.sel.focus).is_some_and(|p| s.doc.styles.resolve_para(&p.props).bidi) {
+        t.props.bidi_visual = true;
+    }
     let story = s.sel.focus.story;
     let path = insert_block_at_caret(s, Block::Table(t))?;
     let mut first = path.0.clone();
@@ -537,21 +542,30 @@ fn bookmark(s: &mut Session, v: &Value) -> CmdResult {
     sel_result(s)
 }
 
+/// The header (or footer) of the caret's section in the slot the caret's page uses (first page,
+/// even page or the default), made when there is none: with Different First Page on, a header
+/// inserted on page 1 is the one page 1 shows (#2826).
 fn hf_part(s: &mut Session, header: bool) -> u32 {
     let block = s.sel.focus.path.0.first().copied().unwrap_or(0) as usize;
-    let sect = s.doc.section_mut(block).clone();
-    let existing = if header { sect.headers.default } else { sect.footers.default };
+    let layout = s.layout();
+    let page = if s.sel.focus.story == StoryRef::Body { layout.page_of(&s.sel.focus) } else { Some(s.page_hint) };
+    let slot = page.and_then(|pg| layout.pages.get(pg)).map(|pg| pg.hf_slot).unwrap_or_default();
+    fn slot_of(slot: wordcraft_layout::HfSlot, set: &mut wordcraft_doc::section::HeaderSet) -> &mut Option<u32> {
+        match slot {
+            wordcraft_layout::HfSlot::First => &mut set.first,
+            wordcraft_layout::HfSlot::Even => &mut set.even,
+            wordcraft_layout::HfSlot::Default => &mut set.default,
+        }
+    }
+    let mut sect = s.doc.section_mut(block).clone();
+    let existing = *slot_of(slot, if header { &mut sect.headers } else { &mut sect.footers });
     if let Some(id) = existing.filter(|id| s.doc.parts.contains_key(id)) {
         return id;
     }
     let style = if header { "Header" } else { "Footer" };
     let id = s.doc.add_part(if header { PartKind::Header } else { PartKind::Footer }, vec![para_block(Paragraph::new().styled(style))]);
     let sect = s.doc.section_mut(block);
-    if header {
-        sect.headers.default = Some(id);
-    } else {
-        sect.footers.default = Some(id);
-    }
+    *slot_of(slot, if header { &mut sect.headers } else { &mut sect.footers }) = Some(id);
     id
 }
 
@@ -590,7 +604,12 @@ fn header_footer(s: &mut Session, v: &Value, header: bool) -> CmdResult {
 }
 
 fn edit_hf(s: &mut Session, v: &Value, header: bool) -> CmdResult {
-    let page = p::u64(v, "page").map(|page| usize::try_from(page).unwrap_or(usize::MAX));
+    let mut page = p::u64(v, "page").map(|page| usize::try_from(page).unwrap_or(usize::MAX));
+    if page.is_none() && s.sel.focus.story == StoryRef::Body {
+        // The caret's page: with Different First Page on, page 1 edits its own header (#2826).
+        let focus = s.sel.focus.clone();
+        page = s.layout().page_of(&focus);
+    }
     let shown = match page {
         Some(page) => shown_hf(s, page, header)?,
         None => {
@@ -972,6 +991,29 @@ mod tests {
         assert_eq!(s.run("insert.editHeader", &json!({"page": 0})).unwrap()["story"].as_u64(), Some(first as u64));
         assert!(s.run("insert.editHeader", &json!({"page": 99})).is_err());
         assert!(s.run("insert.editHeader", &json!({"page": u64::MAX})).is_err());
+    }
+
+    /// #2826: with Different First Page on, Insert › Header and Edit Header with the caret on
+    /// page 1 give page 1 its own header; page 2 keeps the default one.
+    #[test]
+    fn different_first_page_header_is_reachable_from_page_one() {
+        let mut s = two_pages();
+        s.run("insert.header", &json!({"text": "Head"})).unwrap();
+        s.run("insert.closeHeader", &json!({})).unwrap();
+        let head = s.doc.last_section.headers.default.unwrap();
+        s.run("layout.differentFirstPage", &json!({"value": true})).unwrap();
+        assert_eq!(s.layout().pages[0].header_story, None, "page 1 shows the empty first-page header");
+        s.sel = Selection::caret(s.doc.start_of(StoryRef::Body));
+        let first = s.run("insert.header", &json!({"preset": "title"})).unwrap()["story"].as_u64().unwrap() as u32;
+        assert_ne!(first, head);
+        assert_eq!(s.doc.last_section.headers.first, Some(first));
+        let pages = s.layout().pages.clone();
+        assert_eq!((pages[0].header_story, pages[1].header_story), (Some(first), Some(head)));
+        // Edit Footer from page 1 (no page given): page 1's own footer, not the default.
+        s.run("insert.closeHeader", &json!({})).unwrap();
+        s.sel = Selection::caret(s.doc.start_of(StoryRef::Body));
+        let foot = s.run("insert.editFooter", &json!({})).unwrap()["story"].as_u64().unwrap() as u32;
+        assert_eq!((s.doc.last_section.footers.first, s.doc.last_section.footers.default), (Some(foot), None));
     }
 
     fn two_pages() -> Session {

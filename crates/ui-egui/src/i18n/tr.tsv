@@ -440,6 +440,10 @@
 	Modify Style	Stili Değiştir
 	Modify…	Değiştir…
 	Multilevel List	Çok Düzeyli Liste
+	Multilevel List Library	Çok Düzeyli Liste Kitaplığı
+	Article I.	Madde I.
+	Chapter 1	Bölüm 1
+	Section 1.01	Kısım 1.01
 	Multiple Pages	Birden Çok Sayfa
 	Name (A–Z)	Ad (A–Z)
 	Name:	Ad:
@@ -1619,6 +1623,7 @@ preview	Title	Örnek
 	Apply to:	Uygula:
 	Whole document	Tüm belge
 	This section	Bu bölüm
+	Selected text	Seçili metin
 	Fill	Dolgu
 	Setting:	Ayar:
 	3-D	3B
@@ -2087,6 +2092,8 @@ preview	Title	Örnek
 	Math AutoCorrect	Matematik Otomatik Düzelt
 	More >>	Daha fazla >>
 	Moves	Taşımalar
+	Moved from:	Taşındı (kaynak):
+	Moved to:	Taşındı (hedef):
 	New document	Yeni belge
 	No changes (read only)	Değişiklik yok (salt okunur)
 	Only allow this kind of editing:	Yalnızca bu tür düzenlemeye izin ver:
@@ -2379,6 +2386,7 @@ preview	Title	Örnek
 	Hyphenation zone:	Heceleme bölgesi:
 	Italian	İtalyanca
 	Croatian	Hırvatça
+	Indonesian	Endonezyaca
 	Japanese	Japonca
 	Korean	Korece
 	Limit consecutive hyphens to:	Ardışık tireleri şununla sınırla:
@@ -2629,3 +2637,19 @@ preview	Title	Örnek
 # Reading Mode column widths (#1040)
 	Narrow	Dar
 	Medium	Orta
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Bölmeden önce hücreleri birleştir
+	Table size	Tablo boyutu
+	AutoFit behavior	Otomatik sığdırma
+	Initial column width:	Başlangıç sütun genişliği:
+	AutoFit to contents	İçeriğe sığdır
+	AutoFit to window	Pencereye sığdır
+	Separate text at	Metni ayırma yeri
+	Commas	Virgüller
+	Other:	Diğer:
+	The number must be between 1 and {max}.	Sayı 1 ile {max} arasında olmalıdır.
+	The measurement must be between {min} and {max}.	Ölçü {min} ile {max} arasında olmalıdır.
+	Recently Used Fonts	Son Kullanılan Yazı Tipleri
+	All Fonts	Tüm Yazı Tipleri
+	Spike	Biriktirici
+	Insert Spike	Biriktiriciyi Ekle

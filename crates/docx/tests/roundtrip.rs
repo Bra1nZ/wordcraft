@@ -110,6 +110,13 @@ fn every_char_prop_round_trips() {
         bold_cs: Some(false),
         italic_cs: Some(true),
         lang_bidi: Some("fa-IR".into()),
+        east_asian_layout: Some(wordcraft_doc::props::EastAsianLayout {
+            id: Some(3),
+            combine: Some(true),
+            combine_brackets: Some(wordcraft_doc::props::CombineBrackets::Square),
+            vert: Some(false),
+            vert_compress: Some(true),
+        }),
         link: None,
         ins: None,
         del: None,
@@ -705,6 +712,32 @@ fn note_never_references_itself() {
     let got = paras(&r)[0];
     let Some(InlineObject::NoteRef { id, .. }) = got.objects.first() else { panic!("{:?}", got.objects) };
     assert_eq!(part_text(&r, Some(*id)).trim(), "The note.");
+}
+
+/// A note with a custom mark keeps it in the note's own text: a plain run with the mark, not the
+/// `w:footnoteRef` / `w:endnoteRef` placeholder that Word replaces by the automatic number.
+#[test]
+fn custom_note_mark_stays_in_the_note() {
+    let mut d = Document::new();
+    let f = d.add_part(PartKind::Footnote, Vec::new());
+    let e = d.add_part(PartKind::Endnote, Vec::new());
+    for (id, kind) in [(f, NoteKind::Footnote), (e, NoteKind::Endnote)] {
+        let mut note = Paragraph::with_text(" The note.", CharProps::default());
+        note.insert_object(0, InlineObject::NoteRef { kind, id, custom: "*".into() }, &CharProps::default()).unwrap();
+        d.parts.get_mut(&id).unwrap().blocks = vec![para_block(note)];
+    }
+    let mut p = Paragraph::with_text("Text", CharProps::default());
+    p.insert_object(4, InlineObject::NoteRef { kind: NoteKind::Footnote, id: f, custom: "*".into() }, &CharProps::default()).unwrap();
+    let end = p.len();
+    p.insert_object(end, InlineObject::NoteRef { kind: NoteKind::Endnote, id: e, custom: "*".into() }, &CharProps::default()).unwrap();
+    d.body = vec![para_block(p)];
+
+    let bytes = wordcraft_docx::write(&d).expect("write");
+    for (file, mark) in [("word/footnotes.xml", "<w:footnoteRef/>"), ("word/endnotes.xml", "<w:endnoteRef/>")] {
+        let xml = part_xml(&bytes, file);
+        assert!(!xml.contains(mark), "{file}: the custom mark became an automatic number: {xml}");
+        assert!(xml.contains(r#"<w:t xml:space="preserve">*</w:t>"#), "{file}: {xml}");
+    }
 }
 
 /// A note read from a Word file starts with its own number (a reference to itself, from the

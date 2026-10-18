@@ -191,6 +191,7 @@
 	Use the Insert key to switch overtype on and off	Använd Insert-tangenten för att slå på och av överskrivning
 	Whole document	Hela dokumentet
 	This section	Det här avsnittet
+	Selected text	Markerad text
 	Fill	Fyllning
 	Setting:	Inställning:
 	3-D	3D
@@ -573,6 +574,10 @@
 	More templates →	Fler mallar →
 	Move or Resize	Flytta eller ändra storlek
 	Multilevel List	Lista med flera nivåer
+	Multilevel List Library	Bibliotek med listor med flera nivåer
+	Article I.	Artikel I.
+	Chapter 1	Kapitel 1
+	Section 1.01	Avsnitt 1.01
 	Multiple Pages	Flera sidor
 	Name (A–Z)	Namn (A–Ö)
 	Name:	Namn:
@@ -2546,6 +2551,7 @@ preview	Title	Titel
 	Local font access was denied.	Åtkomst till lokala typsnitt nekades.
 	Loaded {count} system fonts.	{count} systemtypsnitt har lästs in.
 	Croatian	Kroatiska
+	Indonesian	Indonesiska
 	Text of the nearest paragraph with a given style (running headers)	Text från närmaste stycke med en viss stil (löpande sidhuvuden)
 	Style name:	Stilnamn:
 	Filter Recipients	Filtrera mottagare
@@ -2647,3 +2653,21 @@ preview	Title	Titel
 	Bottom Right Cell	Nedre högra cellen
 	Inside Horizontal Border	Inre vågrät kantlinje
 	Inside Vertical Border	Inre lodrät kantlinje
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Sammanfoga celler före delning
+	Table size	Tabellstorlek
+	AutoFit behavior	Autopassning
+	Initial column width:	Ursprunglig kolumnbredd:
+	AutoFit to contents	Autoanpassa efter innehåll
+	AutoFit to window	Autoanpassa efter fönster
+	Separate text at	Avgränsa text vid
+	Commas	Kommatecken
+	Other:	Annat:
+	The number must be between 1 and {max}.	Talet måste vara mellan 1 och {max}.
+	The measurement must be between {min} and {max}.	Måttet måste vara mellan {min} och {max}.
+	Recently Used Fonts	Senast använda typsnitt
+	All Fonts	Alla typsnitt
+	Moved from:	Flyttat från:
+	Moved to:	Flyttat till:
+	Spike	Samlare
+	Insert Spike	Infoga samlare

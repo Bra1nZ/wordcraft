@@ -176,6 +176,7 @@
 	Use the Insert key to switch overtype on and off	Insert 키를 눌러 겹쳐쓰기 켜기/끄기
 	Whole document	문서 전체
 	This section	이 구역
+	Selected text	선택한 텍스트
 	Fill	채우기
 	Setting:	설정:
 	3-D	3차원
@@ -561,6 +562,10 @@
 	Modify…	수정…
 	Move or Resize	이동 또는 크기 조정
 	Multilevel List	다단계 목록
+	Multilevel List Library	다단계 목록 라이브러리
+	Article I.	제 I 조
+	Chapter 1	제 1 장
+	Section 1.01	제 1.01 절
 	Multiple Pages	여러 페이지
 	Name (A–Z)	이름순(A–Z)
 	Name:	이름:
@@ -2008,6 +2013,7 @@
 	Column:	열:
 	Count by:	증가 단위:
 	Czech	체코어
+	Indonesian	인도네시아어
 	Danish	덴마크어
 	Delivery address:	배달 주소:
 	Detect language automatically	언어 자동 감지
@@ -2488,3 +2494,19 @@ preview	Title	제목
 	Bottom Right Cell	오른쪽 아래 셀
 	Inside Horizontal Border	안쪽 가로 테두리
 	Inside Vertical Border	안쪽 세로 테두리
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	나누기 전에 셀 병합
+	Table size	표 크기
+	AutoFit behavior	자동 맞춤
+	Initial column width:	초기 열 너비:
+	AutoFit to contents	내용에 맞게 자동 맞춤
+	AutoFit to window	창에 맞게 자동 맞춤
+	Separate text at	텍스트 구분 기호
+	Commas	쉼표
+	Other:	기타:
+	The number must be between 1 and {max}.	숫자는 1에서 {max} 사이여야 합니다.
+	The measurement must be between {min} and {max}.	측정값은 {min}에서 {max} 사이여야 합니다.
+	Recently Used Fonts	최근 사용한 글꼴
+	All Fonts	모든 글꼴
+	Spike	스파이크
+	Insert Spike	스파이크 삽입

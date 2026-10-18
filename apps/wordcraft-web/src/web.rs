@@ -65,11 +65,21 @@ pub fn start() {
                     // Pasted pictures wait apart from dropped files: the app inserts one only when the page is the edit target (#1349).
                     app.services.pasted = Some(pasted);
                     app.autosave = false;
+                    // Preferences from an earlier visit (#2132), as the desktop app reads `ui.json`.
+                    let stored = stored_prefs();
+                    crate::prefs::restore(&mut app, stored.as_deref());
+                    // A region chosen in File › Options replaces the browser's for the first blank
+                    // document too (#838).
+                    if !sample && app.session.prefs.region.is_some() {
+                        let doc = app.session.blank_document();
+                        app.session.set_document(doc);
+                    }
+                    let prefs = crate::prefs::PrefsSync::new(stored);
                     // No document to show: start on File › Home, as the desktop app does (#766).
                     if !sample {
                         app.start_screen();
                     }
-                    Ok(Box::new(WebShell { app, inbox, messages }))
+                    Ok(Box::new(WebShell { app, inbox, messages, prefs }))
                 }),
             )
             .await;
@@ -92,6 +102,16 @@ struct WebShell {
     app: WordApp,
     inbox: Inbox,
     messages: Rc<RefCell<Vec<String>>>,
+    prefs: crate::prefs::PrefsSync,
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+/// The preferences stored on an earlier visit, if the browser allows storage.
+fn stored_prefs() -> Option<String> {
+    local_storage()?.get_item(crate::prefs::KEY).ok()?
 }
 
 impl eframe::App for WebShell {
@@ -116,6 +136,17 @@ impl eframe::App for WebShell {
             self.app.status(msg);
         }
         self.app.logic(ctx);
+        // Store changed preferences straight away: a reload or closed tab runs no exit code (#2132).
+        if let Some(json) = self.prefs.changed(&self.app) {
+            match local_storage() {
+                Some(store) => {
+                    if let Err(e) = store.set_item(crate::prefs::KEY, &json) {
+                        log::warn!("preferences: cannot save: {e:?}");
+                    }
+                }
+                None => log::warn!("preferences: browser storage is unavailable"),
+            }
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {

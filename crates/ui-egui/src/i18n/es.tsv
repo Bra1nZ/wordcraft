@@ -198,6 +198,7 @@
 	Use the Insert key to switch overtype on and off	Usar la tecla Insert para activar y desactivar la sobrescritura
 	Whole document	Todo el documento
 	This section	Esta sección
+	Selected text	Texto seleccionado
 	Fill	Relleno de color
 	Setting:	Valor:
 	3-D	3D
@@ -582,6 +583,10 @@
 	More templates →	Más plantillas →
 	Move or Resize	Mover o cambiar tamaño
 	Multilevel List	Lista multinivel
+	Multilevel List Library	Biblioteca de listas multinivel
+	Article I.	Artículo I.
+	Chapter 1	Capítulo 1
+	Section 1.01	Sección 1.01
 	Multiple Pages	Varias páginas
 	Name (A–Z)	Nombre (A–Z)
 	Name:	Nombre:
@@ -1523,6 +1528,8 @@
 	Math AutoCorrect	Autocorrección matemática
 	More >>	Más >>
 	Moves	Movimientos
+	Moved from:	Movido desde:
+	Moved to:	Movido a:
 	New document	Documento nuevo
 	No changes (read only)	Sin cambios (solo lectura)
 	Only allow this kind of editing:	Permitir solo este tipo de edición:
@@ -2085,6 +2092,7 @@
 	Hyphenation zone:	Zona de separación:
 	Italian	Italiano
 	Croatian	Croata
+	Indonesian	Indonesio
 	Japanese	Japonés
 	Korean	Coreano
 	Limit consecutive hyphens to:	Limitar guiones consecutivos a:
@@ -2599,3 +2607,19 @@ preview	Title	Título
 # Reading Mode column widths (#1040)
 	Narrow	Estrecha
 	Medium	Media
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Combinar celdas antes de dividir
+	Table size	Tamaño de la tabla
+	AutoFit behavior	Autoajuste
+	Initial column width:	Ancho de columna inicial:
+	AutoFit to contents	Ajustar al contenido
+	AutoFit to window	Ajustar a la ventana
+	Separate text at	Separar texto en
+	Commas	Comas
+	Other:	Otro:
+	The number must be between 1 and {max}.	El número debe estar entre 1 y {max}.
+	The measurement must be between {min} and {max}.	La medida debe estar entre {min} y {max}.
+	Recently Used Fonts	Fuentes usadas recientemente
+	All Fonts	Todas las fuentes
+	Spike	Acumulador
+	Insert Spike	Insertar acumulador

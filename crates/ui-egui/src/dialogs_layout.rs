@@ -1,9 +1,11 @@
 //! Layout, Review and Mailings dialogs (#407): Line Numbers (Layout › Line Numbers › Line
 //! Numbering Options…), Hyphenation (Hyphenation Options… and Manual…), Language (Review ›
 //! Language), Envelopes and Labels (Mailings › Create), Formula (Table Layout › Data, #1201)
-//! and Sort (Table Layout › Data, #1200). Each ends by running a command (`layout.lineNumbers`,
+//! Sort (Table Layout › Data, #1200), Split Cells (Table Layout › Merge) and Convert Text to Table
+//! (Insert › Table, #2592). Each ends by running a command (`layout.lineNumbers`,
 //! `layout.hyphenation`, `layout.manualHyphenation` with `caret.set` and `text.optionalHyphen`,
-//! `review.language`, `mailings.envelopes`, `mailings.labels`, `table.formula`, `table.sort`), so
+//! `review.language`, `mailings.envelopes`, `mailings.labels`, `table.formula`, `table.sort`,
+//! `table.split`, `table.fromText`), so
 //! scripts and agents get the same result without the dialog. Shown through
 //! [`crate::dialogs::Dialog::Layout`].
 
@@ -29,6 +31,8 @@ pub enum LayoutDialog {
     Labels(LabelsForm),
     Formula(FormulaForm),
     Sort(SortForm),
+    SplitCells(SplitCellsForm),
+    TextToTable(TextToTableForm),
 }
 
 impl LayoutDialog {
@@ -42,6 +46,8 @@ impl LayoutDialog {
             LayoutDialog::Labels(_) => "labels",
             LayoutDialog::Formula(_) => "tableFormula",
             LayoutDialog::Sort(_) => "tableSort",
+            LayoutDialog::SplitCells(_) => "splitCells",
+            LayoutDialog::TextToTable(_) => "textToTable",
         }
     }
 
@@ -56,6 +62,8 @@ impl LayoutDialog {
             LayoutDialog::Labels(_) => "Labels",
             LayoutDialog::Formula(_) => "Formula",
             LayoutDialog::Sort(_) => "Sort",
+            LayoutDialog::SplitCells(_) => "Split Cells",
+            LayoutDialog::TextToTable(_) => "Convert Text to Table",
         }
     }
 }
@@ -71,6 +79,8 @@ pub fn open(name: &str, app: &mut WordApp) -> Option<LayoutDialog> {
         "labels" => LayoutDialog::Labels(LabelsForm::read(app)),
         "tableFormula" => LayoutDialog::Formula(FormulaForm::read(app)?),
         "tableSort" => LayoutDialog::Sort(SortForm::read(app)?),
+        "splitCells" => LayoutDialog::SplitCells(SplitCellsForm::read(app)?),
+        "textToTable" => LayoutDialog::TextToTable(TextToTableForm::read(app)?),
         _ => return None,
     })
 }
@@ -86,6 +96,8 @@ pub fn body(app: &mut WordApp, ui: &mut Ui, d: &mut LayoutDialog) -> bool {
         LayoutDialog::Labels(f) => labels_ui(app, ui, f),
         LayoutDialog::Formula(f) => formula_ui(app, ui, f),
         LayoutDialog::Sort(f) => sort_ui(app, ui, f),
+        LayoutDialog::SplitCells(f) => split_cells_ui(app, ui, f),
+        LayoutDialog::TextToTable(f) => text_to_table_ui(app, ui, f),
     }
 }
 
@@ -95,10 +107,11 @@ fn buttons(ui: &mut Ui, ok: &str, ok_enabled: bool) -> (bool, bool) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(tl!("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            let (okb, cancelb) =
+                crate::dialogs::ok_cancel_responses(ui, |ui| ui.add_enabled(ok_enabled, crate::widgets::primary_button(ui, tl!(ok))), tl!("Cancel"));
+            if cancelb.clicked() || crate::dialogs::cancel_key_pressed(ui) {
                 r.1 = true;
             }
-            let okb = ui.add_enabled(ok_enabled, crate::widgets::primary_button(ui, tl!(ok)));
             if okb.clicked() {
                 r.0 = true;
             }
@@ -382,7 +395,7 @@ fn manual_ui(app: &mut WordApp, ui: &mut Ui, f: &mut ManualForm) -> bool {
 // Language
 
 /// Proofing languages offered, by BCP 47 tag, with their English names (translated for display).
-pub const LANGUAGES: [(&str, &str); 29] = [
+pub const LANGUAGES: [(&str, &str); 30] = [
     ("en-US", "English (United States)"),
     ("en-GB", "English (United Kingdom)"),
     ("de-DE", "German (Germany)"),
@@ -410,6 +423,7 @@ pub const LANGUAGES: [(&str, &str); 29] = [
     ("zh-CN", "Chinese (Simplified)"),
     ("zh-TW", "Chinese (Traditional)"),
     ("ko-KR", "Korean"),
+    ("id-ID", "Indonesian"),
     ("ar-SA", "Arabic"),
     ("he-IL", "Hebrew"),
 ];
@@ -426,9 +440,10 @@ pub struct LanguageForm {
 impl LanguageForm {
     pub fn read(app: &WordApp) -> LanguageForm {
         let s = &app.session;
-        let here = s.typing_props();
-        let lang = here.lang.clone().or_else(|| s.doc.styles.default_chr.lang.clone()).unwrap_or_else(|| "en-US".into());
-        LanguageForm { lang, no_proof: here.no_proof.unwrap_or(false), detect: s.prefs.detect_language }
+        let style = s.doc.para_at(&s.sel.focus).and_then(|p| p.props.style.as_deref());
+        let here = s.doc.styles.resolve_char(style, &s.typing_props());
+        let lang = here.lang.unwrap_or_else(|| "en-US".into());
+        LanguageForm { lang, no_proof: here.no_proof, detect: s.prefs.detect_language }
     }
 
     /// `review.language` parameters for OK.
@@ -803,6 +818,283 @@ fn sort_ui(app: &mut WordApp, ui: &mut Ui, f: &mut SortForm) -> bool {
     cancel
 }
 
+// ---------------------------------------------------------------------------------------------
+// Split Cells
+
+/// The Split Cells dialog's fields. As in Word, the defaults follow the selection: twice its
+/// columns and its rows. Merge cells before split is offered, and on, when several cells (or one
+/// cell merged across columns) are selected (`several`). A merged selection splits into at most
+/// `max_rows` rows, a vertically merged cell alone into at most its `height`; more gets Word's
+/// message ([`SplitCellsForm::check`]). Without merging each cell splits into columns on its own
+/// and the row count stays 1.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitCellsForm {
+    pub columns: u32,
+    pub rows: u32,
+    pub merge_first: bool,
+    pub several: bool,
+    /// The selected cells, a vertically merged cell counted once.
+    pub cells: u32,
+    /// The rows a single selected cell covers (more than 1 when it is merged down).
+    pub height: u32,
+    /// The selected rows: the default row count and its limit while merging.
+    pub max_rows: u32,
+    /// The default column count: twice the most cells selected in a row.
+    pub default_columns: u32,
+    /// Word's message for a row count out of range, shown until OK is pressed again.
+    #[serde(skip)]
+    pub error: Option<String>,
+}
+
+impl SplitCellsForm {
+    /// The selected cells; none outside a table.
+    pub fn read(app: &WordApp) -> Option<SplitCellsForm> {
+        let s = &app.session;
+        let (tp, _, _) = s.sel.focus.path.cell()?;
+        let mut cells = wordcraft_engine::cmd::table::selected_cells(s);
+        cells.sort_unstable();
+        cells.dedup();
+        let mut rows: Vec<usize> = cells.iter().map(|&(r, _)| r).collect();
+        rows.dedup();
+        let per_row = rows.iter().map(|&r| cells.iter().filter(|c| c.0 == r).count()).max().unwrap_or(1);
+        // A vertically merged cell is one cell, however many rows it covers.
+        let targets = wordcraft_engine::cmd::table::split_targets(s);
+        let t = s.doc.table(s.sel.focus.story, &tp);
+        let (span, height) = match (targets.as_slice(), t) {
+            ([(top, g)], Some(t)) => t
+                .cell_at_grid(*top, *g)
+                .map(|ci| {
+                    (t.rows.get(*top).and_then(|row| row.cells.get(ci)).map_or(1, |c| c.span()), t.vertical_extent(*top, ci).map_or(1, |(_, k)| k))
+                })
+                .unwrap_or((1, 1)),
+            _ => (1, 1),
+        };
+        // Word offers Merge for one cell merged across columns too.
+        let several = targets.len() > 1 || span > 1;
+        let max_rows = if targets.len() > 1 { rows.len().clamp(1, 63) as u32 } else { 1 };
+        let default_columns = per_row.saturating_mul(2).clamp(2, 63) as u32;
+        Some(SplitCellsForm {
+            columns: default_columns,
+            rows: max_rows,
+            merge_first: several,
+            several,
+            cells: targets.len().clamp(1, 63 * 63) as u32,
+            height: height.clamp(1, 32_767) as u32,
+            max_rows,
+            default_columns,
+            error: None,
+        })
+    }
+
+    /// Ticks or unticks Merge cells before split; unticked, each cell splits into two columns
+    /// in its own row, as Word resets the boxes.
+    pub fn set_merge(&mut self, on: bool) {
+        self.merge_first = on && self.several;
+        (self.columns, self.rows) = if self.merge_first { (self.default_columns, self.max_rows) } else { (2, 1) };
+    }
+
+    /// Word's message when the row count is out of range: a merged selection splits into 1 to
+    /// its rows, a merged cell into 1 to its height.
+    pub fn check(&self) -> Option<String> {
+        let limit = if self.cells > 1 && self.merge_first {
+            self.max_rows
+        } else if self.cells <= 1 && self.height > 1 {
+            self.height
+        } else {
+            return None;
+        };
+        (self.rows > limit).then(|| crate::i18n::fmt(tl!("The number must be between 1 and {max}."), &[("max", &limit.to_string())]))
+    }
+
+    /// `table.split` parameters for OK.
+    pub fn params(&self) -> Value {
+        json!({"columns": self.columns, "rows": self.rows, "mergeFirst": self.several && self.merge_first})
+    }
+}
+
+/// An alert line under a dialog's fields, in the error colour.
+fn alert(ui: &mut Ui, text: &Option<String>) {
+    if let Some(e) = text {
+        ui.colored_label(ui.visuals().error_fg_color, e.as_str());
+    }
+}
+
+fn split_cells_ui(app: &mut WordApp, ui: &mut Ui, f: &mut SplitCellsForm) -> bool {
+    // Several cells split one by one keep their rows.
+    let rows_on = !(f.cells > 1 && !f.merge_first);
+    egui::Grid::new("split_cells").num_columns(2).show(ui, |ui| {
+        ui.label(tl!("Number of columns:"));
+        ui.add(egui::DragValue::new(&mut f.columns).range(1..=63));
+        ui.end_row();
+        ui.label(tl!("Number of rows:"));
+        ui.add_enabled(rows_on, egui::DragValue::new(&mut f.rows).range(1..=63));
+        ui.end_row();
+    });
+    let mut merge = f.merge_first;
+    if ui.add_enabled(f.several, egui::Checkbox::new(&mut merge, tl!("Merge cells before split"))).changed() {
+        f.set_merge(merge);
+    }
+    alert(ui, &f.error);
+    let (ok, cancel) = buttons(ui, "OK", true);
+    if ok {
+        // Out of range: Word's message, and the dialog stays open.
+        f.error = f.check();
+        return f.error.is_none() && run(app, "table.split", f.params());
+    }
+    cancel
+}
+
+// ---------------------------------------------------------------------------------------------
+// Convert Text to Table
+
+/// The Convert Text to Table dialog's fields: the selected paragraphs (`lines`), where to
+/// separate them (`paragraph`, `comma`, `tab` or `other` with `other_char`), the column count
+/// (guessed from the text for the separator, as Word does) and the AutoFit behaviour: an initial
+/// column width (`width`, "Auto" or a measurement up to 22 in), or AutoFit to contents or to the
+/// window. `rows` is the resulting row count, shown read-only.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextToTableForm {
+    #[serde(skip)]
+    pub lines: Vec<String>,
+    pub columns: u32,
+    pub rows: usize,
+    pub autofit: String,
+    /// Initial column width as typed: "Auto" (or 0) shares the text width out.
+    pub width: String,
+    pub separator: String,
+    pub other_char: String,
+    /// Word's message for a width out of range, shown until OK is pressed again.
+    #[serde(skip)]
+    pub error: Option<String>,
+}
+
+impl TextToTableForm {
+    /// The selected paragraphs; none when the selection can't be converted (a table inside it).
+    pub fn read(app: &WordApp) -> Option<TextToTableForm> {
+        let lines = wordcraft_engine::cmd::table::text_table_lines(&app.session).ok()?;
+        // Tabs when the text has them, else paragraphs (Word doesn't guess commas).
+        let separator = if lines.iter().any(|l| l.contains('\t')) { "tab" } else { "paragraph" };
+        let mut f = TextToTableForm {
+            lines,
+            columns: 1,
+            rows: 0,
+            autofit: "initial".into(),
+            width: tl!("Auto").into(),
+            separator: separator.into(),
+            other_char: "-".into(),
+            error: None,
+        };
+        f.guess_columns();
+        Some(f)
+    }
+
+    fn sep(&self) -> Option<char> {
+        match self.separator.as_str() {
+            "comma" => Some(','),
+            "tab" => Some('\t'),
+            "other" => Some(self.other_char.chars().next().unwrap_or('-')),
+            _ => None,
+        }
+    }
+
+    /// The column count the text gives with the chosen separator.
+    pub fn guess_columns(&mut self) {
+        let cols = wordcraft_engine::cmd::table::text_table_cells(&self.lines, self.sep(), None).1;
+        self.columns = cols.clamp(1, 63) as u32;
+        self.count_rows();
+    }
+
+    /// The row count for the chosen separator and columns.
+    pub fn count_rows(&mut self) {
+        self.rows = wordcraft_engine::cmd::table::text_table_cells(&self.lines, self.sep(), Some(self.columns as usize)).0.len();
+    }
+
+    /// The initial column width in points: 0 for Auto, `None` when it isn't a measurement from
+    /// 0 to 22 in.
+    fn width_pt(&self) -> Option<f32> {
+        let text = self.width.trim();
+        if text.is_empty() || text.eq_ignore_ascii_case("auto") || text == tl!("Auto") {
+            return Some(0.0);
+        }
+        wordcraft_geom::parse_measure(text, unit()).filter(|pt| (0.0..=22.0 * 72.0).contains(pt))
+    }
+
+    /// Word's message when the initial column width is out of range (only with that option).
+    pub fn check(&self) -> Option<String> {
+        if self.autofit != "initial" || self.width_pt().is_some() {
+            return None;
+        }
+        let sep = crate::options::decimal();
+        let (min, max) = (unit().format_with(0.0, sep), unit().format_with(22.0 * 72.0, sep));
+        Some(crate::i18n::fmt(tl!("The measurement must be between {min} and {max}."), &[("min", &min), ("max", &max)]))
+    }
+
+    /// `table.fromText` parameters for OK.
+    pub fn params(&self) -> Value {
+        let mut v = json!({"separator": self.separator, "columns": self.columns, "autofit": self.autofit});
+        if self.separator == "other" {
+            v["char"] = json!(self.other_char);
+        }
+        if self.autofit == "initial"
+            && let Some(w) = self.width_pt().filter(|&w| w > 0.0)
+        {
+            v["width"] = json!(w);
+        }
+        v
+    }
+}
+
+fn text_to_table_ui(app: &mut WordApp, ui: &mut Ui, f: &mut TextToTableForm) -> bool {
+    let before = (f.separator.clone(), f.other_char.clone(), f.columns);
+    heading(ui, "Table size");
+    egui::Grid::new("text_to_table").num_columns(2).show(ui, |ui| {
+        ui.label(tl!("Number of columns:"));
+        ui.add(egui::DragValue::new(&mut f.columns).range(1..=63));
+        ui.end_row();
+        ui.label(tl!("Number of rows:"));
+        ui.label(f.rows.to_string());
+        ui.end_row();
+    });
+    heading(ui, "AutoFit behavior");
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut f.autofit, "initial".to_string(), tl!("Initial column width:"));
+        ui.add_enabled(f.autofit == "initial", egui::TextEdit::singleline(&mut f.width).desired_width(72.0));
+    });
+    ui.radio_value(&mut f.autofit, "contents".to_string(), tl!("AutoFit to contents"));
+    ui.radio_value(&mut f.autofit, "window".to_string(), tl!("AutoFit to window"));
+    heading(ui, "Separate text at");
+    egui::Grid::new("text_to_table_sep").num_columns(2).show(ui, |ui| {
+        ui.radio_value(&mut f.separator, "paragraph".to_string(), tl!("Paragraphs"));
+        ui.radio_value(&mut f.separator, "comma".to_string(), tl!("Commas"));
+        ui.end_row();
+        ui.radio_value(&mut f.separator, "tab".to_string(), tl!("Tabs"));
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut f.separator, "other".to_string(), tl!("Other:"));
+            let r = ui.add(egui::TextEdit::singleline(&mut f.other_char).char_limit(1).desired_width(24.0));
+            if r.changed() {
+                f.separator = "other".into();
+            }
+        });
+        ui.end_row();
+    });
+    if (f.separator.as_str(), f.other_char.as_str()) != (before.0.as_str(), before.1.as_str()) {
+        f.guess_columns();
+    } else if f.columns != before.2 {
+        f.count_rows();
+    }
+    alert(ui, &f.error);
+    let ready = f.separator != "other" || !f.other_char.is_empty();
+    let (ok, cancel) = buttons(ui, "OK", ready);
+    if ok {
+        // Out of range: Word's message, and the dialog stays open.
+        f.error = f.check();
+        return f.error.is_none() && run(app, "table.fromText", f.params());
+    }
+    cancel
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -890,6 +1182,72 @@ mod tests {
         assert_eq!(a.session.doc.styles.default_chr.lang.as_deref(), Some("fr-FR"));
         assert!(a.dialog.is_none());
         assert_eq!(language_name("xx-YY"), "xx-YY", "an unknown tag shows as itself");
+    }
+
+    /// #2717: language and no-proof can come from defaults or either kind of style.
+    #[test]
+    fn language_dialog_reads_inherited_proofing() {
+        for source in ["default", "paragraph", "character"] {
+            let mut a = app();
+            a.run("select.all", json!({})).unwrap();
+            let proofing = wordcraft_doc::CharProps { lang: Some("en-GB".into()), no_proof: Some(true), ..Default::default() };
+            match source {
+                "default" => a.session.doc.styles.default_chr.overlay(&proofing),
+                "paragraph" => a.session.doc.styles.styles.iter_mut().find(|s| s.id == "Normal").unwrap().chr.overlay(&proofing),
+                _ => {
+                    a.session.doc.styles.styles.push(wordcraft_doc::Style {
+                        id: "ProofingCharacter".into(),
+                        kind: wordcraft_doc::StyleKind::Character,
+                        chr: proofing,
+                        ..Default::default()
+                    });
+                    let (from, to) = a.session.sel.ordered();
+                    let (from, to) = (from.clone(), to.clone());
+                    a.session.doc.format_range(&from, &to, &|c| c.style = Some("ProofingCharacter".into())).unwrap();
+                }
+            }
+            let f = LanguageForm::read(&a);
+            assert_eq!((f.lang.as_str(), f.no_proof), ("en-GB", true), "{source}");
+            a.run("review.language", json!({"lang": "fr-FR", "noProof": false})).unwrap();
+            let f = LanguageForm::read(&a);
+            assert_eq!((f.lang.as_str(), f.no_proof), ("fr-FR", false), "direct formatting overrides {source}");
+        }
+    }
+
+    /// #2717: opening and accepting the dialog must not reset inherited proofing.
+    #[test]
+    fn language_dialog_ok_keeps_inherited_proofing() {
+        use egui_kittest::kittest::Queryable;
+        let mut a = app();
+        a.run("ui.language", json!({"value": "en"})).unwrap();
+        let normal = a.session.doc.styles.styles.iter_mut().find(|s| s.id == "Normal").unwrap();
+        normal.chr.lang = Some("en-GB".into());
+        normal.chr.no_proof = Some(true);
+        a.run("select.all", json!({})).unwrap();
+        let before = a.session.doc.clone();
+        a.run("review.language", json!({})).unwrap();
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            a,
+        );
+        h.run_steps(3);
+        h.get_by_label("Cancel").click();
+        h.run_steps(3);
+        assert_eq!(h.state().session.doc, before, "cancel must not format the selection");
+        h.state_mut().run("review.language", json!({})).unwrap();
+        h.run_steps(3);
+        h.get_by_label("OK").click();
+        h.run_steps(3);
+        assert!(h.state().dialog.is_none());
+        let state = h.state_mut().run("format.state", json!({})).unwrap();
+        assert_eq!(state["lang"], "en-GB");
+        assert_eq!(state["noProof"], true);
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        assert_eq!(h.state().session.doc, before, "one undo restores the inherited formatting");
     }
 
     /// #407: Envelopes starts from the selected address; Add to Document puts an envelope
@@ -991,6 +1349,155 @@ mod tests {
         a.run("table.sort", f.params()).unwrap();
         assert_eq!(first_column(&a), ["Name", "Al", "Cy", "Bea"]);
         assert!(a.dialog.is_none());
+    }
+
+    fn table_shape(a: &WordApp) -> Vec<usize> {
+        a.session.doc.body.iter().find_map(|b| b.as_table()).unwrap().rows.iter().map(|r| r.cells.len()).collect()
+    }
+
+    /// #2592: Split Cells opens its dialog from the ribbon's command (scripts with settings never
+    /// see it); OK splits the cell into the entered columns and rows. Merge cells before split is
+    /// offered, and on, when several cells are selected.
+    #[test]
+    fn split_cells_opens_its_dialog() {
+        let mut a = table_app(2, &["A", "B", "C", "D"]);
+        assert_eq!(a.run("table.split", json!({})).unwrap(), json!({"pending": "splitCells"}));
+        assert_eq!(table_shape(&a), [2, 2], "nothing split yet");
+        let LayoutDialog::SplitCells(mut f) = form(&mut a) else { panic!("split cells") };
+        assert_eq!((f.columns, f.rows, f.several), (2, 1, false));
+        assert_eq!(f.params()["mergeFirst"], false);
+        (f.columns, f.rows) = (3, 2);
+        a.run("table.split", f.params()).unwrap();
+        assert_eq!(table_shape(&a), [2, 4, 4]);
+        assert!(a.dialog.is_none());
+
+        let mut a = table_app(2, &["A", "B", "C", "D"]);
+        let cell = |r: u32, c: u32| json!({"story": "body", "path": [0, r, c, 0], "off": 0});
+        a.run("select.range", json!({"anchor": cell(0, 0), "focus": cell(1, 1)})).unwrap();
+        a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+        let LayoutDialog::SplitCells(mut f) = form(&mut a) else { panic!("split cells") };
+        assert!(f.several && f.merge_first);
+        (f.columns, f.rows) = (2, 1);
+        a.run("table.split", f.params()).unwrap();
+        // The merged cell spans both rows; its two parts do too.
+        assert_eq!(table_shape(&a), [2, 2], "merged into one cell, then split in two");
+        let t = a.session.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+        assert!(t.rows[1].cells.iter().all(|c| c.props.vmerge == wordcraft_doc::props::VMerge::Continue));
+
+        let mut a = app();
+        a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+        assert!(a.dialog.is_none(), "no dialog outside a table");
+    }
+
+    /// #2592, as Word does: Split Cells starts with twice the selected columns and the selected
+    /// rows; Merge is off and greyed for one cell. Unticking it splits each cell on its own: one
+    /// row and two columns again.
+    #[test]
+    fn split_cells_defaults_follow_the_selection() {
+        let cell = |r: u32, c: u32| json!({"story": "body", "path": [0, r, c, 0], "off": 0});
+        let defaults = |anchor: Value, focus: Value| {
+            let mut a = table_app(3, &["A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+            a.run("select.range", json!({"anchor": anchor, "focus": focus})).unwrap();
+            a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+            let LayoutDialog::SplitCells(f) = form(&mut a) else { panic!("split cells") };
+            f
+        };
+        let f = defaults(cell(1, 1), cell(1, 1));
+        assert_eq!((f.columns, f.rows, f.several, f.merge_first), (2, 1, false, false), "one cell");
+        let f = defaults(cell(0, 0), cell(1, 0));
+        assert_eq!((f.columns, f.rows, f.merge_first), (2, 2, true), "two cells in a column");
+        let f = defaults(cell(0, 0), cell(0, 2));
+        assert_eq!((f.columns, f.rows, f.merge_first), (6, 1, true), "a row of three");
+        let mut f = defaults(cell(0, 0), cell(1, 2));
+        assert_eq!((f.columns, f.rows, f.merge_first, f.max_rows), (6, 2, true, 2), "two rows of three");
+        f.set_merge(false);
+        assert_eq!((f.columns, f.rows), (2, 1), "each cell on its own");
+        assert_eq!(f.params()["mergeFirst"], false);
+
+        // A merged cell is one cell, wherever in it the selection is.
+        let mut a = table_app(3, &["A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+        a.run("select.range", json!({"anchor": cell(0, 0), "focus": cell(1, 0)})).unwrap();
+        a.run("table.merge", json!({})).unwrap();
+        a.run("select.range", json!({"anchor": cell(0, 0), "focus": cell(1, 0)})).unwrap();
+        a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+        let LayoutDialog::SplitCells(mut f) = form(&mut a) else { panic!("split cells") };
+        assert_eq!((f.columns, f.rows, f.several, f.merge_first), (2, 1, false, false), "one merged cell");
+        // Word allows 1 to its height rows, with its message, and keeps the dialog open.
+        f.rows = 3;
+        assert_eq!(f.check().as_deref(), Some("The number must be between 1 and 2."));
+        f.rows = 2;
+        assert_eq!(f.check(), None);
+
+        // The merged cell and the two cells to its right: Merge ticked, 4 × 2.
+        let mut a = table_app(3, &["A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+        a.run("select.range", json!({"anchor": cell(0, 1), "focus": cell(1, 1)})).unwrap();
+        a.run("table.merge", json!({})).unwrap();
+        a.run("select.range", json!({"anchor": cell(0, 1), "focus": cell(1, 2)})).unwrap();
+        a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+        let LayoutDialog::SplitCells(mut f) = form(&mut a) else { panic!("split cells") };
+        assert_eq!((f.columns, f.rows, f.several, f.merge_first), (4, 2, true, true), "merged cell and neighbours");
+        f.rows = 3;
+        assert_eq!(f.check().as_deref(), Some("The number must be between 1 and 2."));
+
+        // One cell merged across two columns: Merge offered and ticked, 2 × 1.
+        let mut a = table_app(3, &["A", "B", "C", "D", "E", "F", "G", "H", "I"]);
+        a.run("select.range", json!({"anchor": cell(2, 0), "focus": cell(2, 1)})).unwrap();
+        a.run("table.merge", json!({})).unwrap();
+        a.run("ui.dialog", json!({"name": "splitCells"})).unwrap();
+        let LayoutDialog::SplitCells(f) = form(&mut a) else { panic!("split cells") };
+        assert_eq!((f.columns, f.rows, f.several, f.merge_first), (2, 1, true, true), "a wide cell");
+        assert_eq!(f.check(), None);
+    }
+
+    /// #2592: Convert Text to Table opens its dialog; the separator and column count are guessed
+    /// from the text, the row count follows the columns, and OK converts with the settings.
+    #[test]
+    fn text_to_table_opens_its_dialog() {
+        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::from_text("a\tb\tc\nd")), Services::default());
+        a.run("select.all", json!({})).unwrap();
+        assert_eq!(a.run("table.fromText", json!({})).unwrap(), json!({"pending": "textToTable"}));
+        assert!(a.session.doc.body.iter().all(|b| b.as_table().is_none()), "nothing converted yet");
+        let LayoutDialog::TextToTable(mut f) = form(&mut a) else { panic!("text to table") };
+        assert_eq!((f.separator.as_str(), f.columns, f.rows, f.autofit.as_str(), f.width.as_str()), ("tab", 3, 2, "initial", "Auto"));
+        assert!(f.params().get("width").is_none(), "Auto");
+        f.width = "1 in".into();
+        assert_eq!((f.check(), f.params()["width"].as_f64()), (None, Some(72.0)));
+        f.width = "50 in".into();
+        assert!(f.check().is_some_and(|e| e.starts_with("The measurement must be between 0")), "{:?}", f.check());
+        f.width = "0".into();
+        assert_eq!((f.check(), f.params().get("width")), (None, None), "0 is Auto");
+        f.width = "Auto".into();
+        f.separator = "paragraph".into();
+        f.guess_columns();
+        assert_eq!((f.columns, f.rows), (1, 2));
+        f.separator = "tab".into();
+        f.columns = 2;
+        f.count_rows();
+        assert_eq!(f.rows, 3, "a b / c / d");
+        a.run("table.fromText", f.params()).unwrap();
+        assert!(a.dialog.is_none());
+        let t = a.session.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+        assert_eq!(t.rows.len(), 3);
+        assert!(!t.props.fixed, "the table still resizes to fit its contents");
+
+        let mut a = app();
+        a.run("select.all", json!({})).unwrap();
+        a.run("ui.dialog", json!({"name": "textToTable"})).unwrap();
+        let LayoutDialog::TextToTable(f) = form(&mut a) else { panic!("text to table") };
+        assert_eq!((f.separator.as_str(), f.columns, f.rows), ("paragraph", 1, 2), "a comma in one paragraph only");
+
+        // Word opens comma text on Paragraphs too; Commas counts the columns, short lines pad.
+        let mut a = WordApp::new(Session::new(wordcraft_doc::Document::from_text("a,b,c\nd,e,f\ng,h\ni")), Services::default());
+        a.run("select.all", json!({})).unwrap();
+        a.run("table.fromText", json!({})).unwrap();
+        let LayoutDialog::TextToTable(mut f) = form(&mut a) else { panic!("text to table") };
+        assert_eq!((f.separator.as_str(), f.columns, f.rows, f.other_char.as_str()), ("paragraph", 1, 4, "-"));
+        f.separator = "comma".into();
+        f.guess_columns();
+        assert_eq!((f.columns, f.rows), (3, 4));
+        a.run("table.fromText", f.params()).unwrap();
+        let t = a.session.doc.body.iter().find_map(|b| b.as_table()).unwrap();
+        assert_eq!(t.rows.iter().map(|r| r.cells.len()).collect::<Vec<_>>(), [3, 3, 3, 3]);
     }
 
     /// The envelope sizes are in the interface language with the region's decimal separator

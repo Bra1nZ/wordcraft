@@ -225,6 +225,7 @@
 	Use the Insert key to switch overtype on and off	用 Insert 键切换改写模式
 	Whole document	整篇文档
 	This section	本节
+	Selected text	所选文字
 	Fill	填充
 	Setting:	设置：
 	3-D	三维
@@ -579,6 +580,10 @@
 	Modify…	修改…
 	Move or Resize	移动或调整大小
 	Multilevel List	多级列表
+	Multilevel List Library	多级列表库
+	Article I.	第 I 条
+	Chapter 1	第 1 章
+	Section 1.01	第 1.01 节
 	Multiple Pages	多页
 	Name (A–Z)	名称（A–Z）
 	Name:	名称：
@@ -1495,6 +1500,8 @@
 	Math AutoCorrect	数学符号自动更正
 	More >>	更多 >>
 	Moves	移动
+	Moved from:	移动自:
+	Moved to:	移动到:
 	New document	新文档
 	No changes (read only)	不允许任何更改(只读)
 	Only allow this kind of editing:	仅允许此类编辑:
@@ -2057,6 +2064,7 @@
 	Hyphenation zone:	断字区：
 	Italian	意大利语
 	Croatian	克罗地亚语
+	Indonesian	印度尼西亚语
 	Japanese	日语
 	Korean	韩语
 	Limit consecutive hyphens to:	连续断字数限制：
@@ -2245,3 +2253,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	窄
 	Medium	中等
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	拆分前合并单元格
+	Table size	表格尺寸
+	AutoFit behavior	自动调整操作
+	Initial column width:	初始列宽：
+	AutoFit to contents	根据内容调整表格
+	AutoFit to window	根据窗口调整表格
+	Separate text at	文字分隔位置
+	Commas	逗号
+	Other:	其他字符：
+	The number must be between 1 and {max}.	数字必须介于 1 和 {max} 之间。
+	The measurement must be between {min} and {max}.	度量值必须介于 {min} 和 {max} 之间。
+	Recently Used Fonts	最近使用的字体
+	All Fonts	所有字体
+	Spike	图文场
+	Insert Spike	插入图文场

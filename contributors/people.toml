@@ -119,6 +119,7 @@ display_name = "The Legend Of MTS Dev"
 
 [people.dotCooCoo]
 real_name = "Robert Lee"
+sync_github_name = true
 
 [people.rbr48]
 real_name = "M S Rana"
@@ -134,4 +135,14 @@ sync_github_name = false
 [people.andrejskvorc]
 real_name = "Andrej Škvorc"
 display_name = "Andrej Škvorc"
+sync_github_name = false
+
+[people.olekkut]
+real_name = "Aleksander Kutycki"
+display_name = "Aleksander Kutycki"
+sync_github_name = true
+
+[people.marcoarnulfo]
+real_name = "Marco Arnulfo"
+display_name = "Marco Arnulfo"
 sync_github_name = false

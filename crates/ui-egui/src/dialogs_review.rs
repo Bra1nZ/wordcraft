@@ -68,10 +68,14 @@ fn buttons(ui: &mut Ui, ok_enabled: bool) -> (bool, bool) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(tl!("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            let (okb, cancelb) = crate::dialogs::ok_cancel_responses(
+                ui,
+                |ui| ui.add_enabled(ok_enabled, crate::widgets::primary_button(ui, tl!("OK"))),
+                tl!("Cancel"),
+            );
+            if cancelb.clicked() || crate::dialogs::cancel_key_pressed(ui) {
                 r.1 = true;
             }
-            let okb = ui.add_enabled(ok_enabled, crate::widgets::primary_button(ui, tl!("OK")));
             if okb.clicked() {
                 r.0 = true;
             }
@@ -349,6 +353,8 @@ impl AutoCorrectForm {
             "bullets": o.bullets,
             "numbering": o.numbering,
             "borderLines": o.border_lines,
+            "autoAddFirstLetter": o.auto_add_first_letter,
+            "autoAddInitialCaps": o.auto_add_initial_caps,
         })
     }
 }
@@ -479,6 +485,8 @@ fn autocorrect_tab(app: &mut WordApp, ui: &mut Ui, f: &mut AutoCorrectForm) {
 
 fn exceptions(app: &mut WordApp, ui: &mut Ui, f: &mut AutoCorrectForm) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.checkbox(&mut f.options.auto_add_first_letter, tl!("Automatically add words to list (First Letter)"));
+        ui.checkbox(&mut f.options.auto_add_initial_caps, tl!("Automatically add words to list (INitial CAps)"));
         ui.label(tl!("Don't capitalize after:"));
         let list = f.options.exception_list();
         let mut picked = None;
@@ -654,6 +662,9 @@ fn setup_ui(app: &mut WordApp, ui: &mut Ui, st: &mut RestrictPane) {
         ui.label(egui::RichText::new(tl!("The password is optional; without it anyone can stop the protection.")).small());
         passwords(ui, st, true);
         ui.horizontal(|ui| {
+            // macOS puts Cancel before OK.
+            let mac = cfg!(target_os = "macos");
+            let mut cancel = mac && ui.button(tl!("Cancel")).clicked();
             if ui.button(tl!("OK")).clicked() {
                 if st.password != st.confirm {
                     st.message = tl!("The passwords don't match.").to_string();
@@ -677,7 +688,8 @@ fn setup_ui(app: &mut WordApp, ui: &mut Ui, st: &mut RestrictPane) {
                     st.confirm = Password::default();
                 }
             }
-            if ui.button(tl!("Cancel")).clicked() {
+            cancel |= !mac && ui.button(tl!("Cancel")).clicked();
+            if cancel {
                 st.asking = false;
                 st.password = Password::default();
                 st.confirm = Password::default();
@@ -738,10 +750,13 @@ fn enforced_ui(app: &mut WordApp, ui: &mut Ui, st: &mut RestrictPane, mode: &str
         ui.label(egui::RichText::new(tl!("Type the password to stop the protection.")).small());
         passwords(ui, st, false);
         ui.horizontal(|ui| {
+            // macOS puts Cancel before OK.
+            let mac = cfg!(target_os = "macos");
+            let cancel_first = mac && ui.button(tl!("Cancel")).clicked();
             if ui.button(tl!("OK")).clicked() {
                 stop(app, st);
             }
-            if ui.button(tl!("Cancel")).clicked() {
+            if cancel_first || (!mac && ui.button(tl!("Cancel")).clicked()) {
                 st.asking = false;
                 st.password = Password::default();
             }

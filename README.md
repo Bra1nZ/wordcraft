@@ -188,7 +188,7 @@ covers every target starting with it (`wordcraft*=debug`). The logger is
 | L0 | `wordcraft-geom` | units and measurements |
 | L1 | `wordcraft-doc`, `wordcraft-fonts`, `wordcraft-proof` | document model and editing; fonts and shaping; spelling, grammar, hyphenation |
 | L2 | `wordcraft-layout`, `wordcraft-docx`, `wordcraft-formats` | line breaking, pagination, tables, notes, hit testing; OOXML; ODT/RTF/HTML/Markdown/TXT |
-| L3 | `wordcraft-render`, `wordcraft-pdf` | rasteriser (vello_cpu); PDF (krilla) |
+| L3 | `wordcraft-render`, `wordcraft-pdf` | rasteriser (vello_cpu); PDF ([craft-pdf](docs/shared-pdf.md), Krilla) |
 | L4 | `wordcraft-engine` | session, undo, 422 commands, Word feature catalog |
 | L5 | `wordcraft-mcp` | MCP server |
 | L6 | `wordcraft-ui-egui` | the Word-style front end (swappable) |
@@ -366,7 +366,9 @@ Bundled fonts, icons, images and other assets keep their own open licenses; each
 with its author, source and license in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 The English spelling dictionary and hyphenation come from Grady Ward's public-domain Moby
-Hyphenator II word list. Polish spelling reads the Hunspell `pl_PL` dictionary installed on the system (not bundled) and
+Hyphenator II word list. Polish spelling reads the Hunspell `pl_PL` dictionary installed on the system (not bundled), as
+do Russian, Portuguese, Czech, Italian, Croatian and Turkish spelling (how to install them:
+[docs/spelling-dictionaries.md](docs/spelling-dictionaries.md)), and
 Polish hyphenation the TeX patterns by Hanna Kołodziejska, Bogusław Jackowski and Marek Ryćko (MIT
 option). The sample documents and templates are original text written for WordCraft.
 

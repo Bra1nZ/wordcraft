@@ -149,6 +149,10 @@ pub struct LayoutOptions {
     pub show_hidden: bool,
     /// Final text ("No Markup"): tracked deletions take no space and draw nothing.
     pub hide_deleted: bool,
+    /// Tracked deletions that take no space and draw nothing although markup is shown: those
+    /// Track Changes Options mark Hidden (deletions, or moved-away text). `hide_deleted` and
+    /// `deletions_in_balloons` leave every deletion out whatever this says.
+    pub hide_marked: HideDeleted,
     /// Show revisions in balloons: tracked deletions in the body take no space and draw nothing
     /// (the editor shows them in balloons beside the page). Headers, footers, notes and text
     /// boxes get no balloons, so their deletions stay inline.
@@ -186,9 +190,29 @@ impl Default for ProofOptions {
 }
 
 impl LayoutOptions {
-    /// Whether tracked deletions in `story` take no space and draw nothing.
-    pub fn hides_deleted(&self, story: StoryRef) -> bool {
-        self.hide_deleted || (self.deletions_in_balloons && story == StoryRef::Body)
+    /// Which tracked deletions in `story` take no space and draw nothing.
+    pub fn hides_deleted(&self, story: StoryRef) -> HideDeleted {
+        if self.hide_deleted || (self.deletions_in_balloons && story == StoryRef::Body) { HideDeleted::ALL } else { self.hide_marked }
+    }
+}
+
+/// Which tracked deletions are left out of the layout: ordinary ones, and the text a tracked
+/// move took away (the source of a move, `w:moveFrom`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct HideDeleted {
+    pub plain: bool,
+    pub moved_from: bool,
+}
+
+impl HideDeleted {
+    pub const ALL: HideDeleted = HideDeleted { plain: true, moved_from: true };
+    /// Whether any deletion is left out.
+    pub fn any(self) -> bool {
+        self.plain || self.moved_from
+    }
+    /// Whether text deleted by revision `del` (`None`: not deleted) is left out.
+    pub fn hides(self, doc: &Document, del: Option<u32>) -> bool {
+        del.is_some() && if doc.move_name(del).is_some() { self.moved_from } else { self.plain }
     }
 }
 
@@ -475,7 +499,7 @@ struct Key {
     read_spacing: Option<u32>,
     grid: (u32, u32, u32, bool),
     fit: bool,
-    hide_deleted: bool,
+    hide_deleted: HideDeleted,
     /// STYLEREF results in headers and footers ([`FieldCtx::styleref_key`]).
     sref: u64,
 }
@@ -545,6 +569,7 @@ fn env_hash(doc: &Document, opts: &LayoutOptions) -> u64 {
         s,
         opts.show_hidden,
         opts.hide_deleted,
+        opts.hide_marked,
         opts.deletions_in_balloons,
         opts.proofing,
         opts.numeral,
@@ -644,7 +669,7 @@ struct Ctx<'a> {
     grid: para::Grid,
     /// Whether tracked deletions are left out in the story being laid out
     /// ([`LayoutOptions::hides_deleted`]): the body's, or the story of the [`layout_box`] at work.
-    hide_deleted: bool,
+    hide_deleted: HideDeleted,
     /// Whether body text (or its notes) laid out so far shows a page total (`NUMPAGES`,
     /// `SECTIONPAGES`), which is only known once the whole body is paginated.
     uses_totals: bool,
@@ -701,7 +726,7 @@ impl Ctx<'_> {
             fields: &self.fields,
             show_hidden: false,
             field_codes: false,
-            hide_deleted: false,
+            hide_deleted: Default::default(),
             table: None,
             proofing: None,
             numeral: self.opts.numeral,
@@ -868,14 +893,20 @@ impl Ctx<'_> {
 /// (`Float::hidden`, whatever is shown). `table_chr` is the
 /// cell's table-style character formatting ([`para::CellText::chr`]), resolved as the paragraph is
 /// laid out with (`StyleSheet::resolve_char_in`).
-fn left_out_objects(doc: &Document, p: &Paragraph, table_chr: Option<&CharProps>, show_hidden: bool, hide_deleted: bool) -> impl Fn(usize) -> bool {
+fn left_out_objects(
+    doc: &Document,
+    p: &Paragraph,
+    table_chr: Option<&CharProps>,
+    show_hidden: bool,
+    hide_deleted: HideDeleted,
+) -> impl Fn(usize) -> bool {
     let mut left = Vec::new();
     // No text left out with hidden text shown and markup on (hidden drawings still are, below).
-    if (hide_deleted || !show_hidden) && !p.objects.is_empty() {
+    if (hide_deleted.any() || !show_hidden) && !p.objects.is_empty() {
         let style = p.props.style.as_deref();
         let is_left = |c: &CharProps| {
             let rc = doc.styles.resolve_char_in(style, table_chr, c);
-            para::left_out(&rc, show_hidden, hide_deleted)
+            para::left_out(doc, &rc, show_hidden, hide_deleted)
         };
         // Runs and objects are both in order: one walk finds each object's run (past the last run,
         // the paragraph mark, as `props_of_char` gives), resolving a run's formatting only once.
@@ -906,7 +937,7 @@ fn left_out_objects(doc: &Document, p: &Paragraph, table_chr: Option<&CharProps>
 /// section or (footnotes) on each page. `pages` gives the page each footnote was placed on by an
 /// earlier pass (empty: numbered on). With `hide_deleted`, notes whose reference mark is a
 /// tracked deletion are left out, as in the final text.
-fn note_info(doc: &Document, hide_deleted: bool, pages: &HashMap<u32, usize>) -> HashMap<u32, fields::NoteNum> {
+fn note_info(doc: &Document, hide_deleted: HideDeleted, pages: &HashMap<u32, usize>) -> HashMap<u32, fields::NoteNum> {
     use wordcraft_doc::section::NoteRestart;
     let sections = doc.sections();
     let opts: Vec<[wordcraft_doc::section::NoteOptions; 2]> =
@@ -962,7 +993,7 @@ fn note_info(doc: &Document, hide_deleted: bool, pages: &HashMap<u32, usize>) ->
 
 /// Note part ids → numbers, numbered on (see [`note_info`]).
 #[cfg(test)]
-fn note_numbers(doc: &Document, hide_deleted: bool) -> HashMap<u32, u32> {
+fn note_numbers(doc: &Document, hide_deleted: HideDeleted) -> HashMap<u32, u32> {
     note_info(doc, hide_deleted, &HashMap::new()).into_iter().map(|(id, n)| (id, n.n)).collect()
 }
 
@@ -3649,6 +3680,43 @@ fn next_first_line(ctx: &mut Ctx, block: usize, width: f32, depth: usize) -> f32
     }
 }
 
+fn row_keeps_next(row: &table::RowLayout) -> bool {
+    let Some(items) = row.cells.first().and_then(|cell| row.items.get(cell.items.clone())) else { return false };
+    let Some((depth, story)) = items
+        .iter()
+        .filter_map(|item| match item {
+            Placed::Cell { table, story, .. } => Some((table.0.len() + 3, *story)),
+            _ => None,
+        })
+        .min_by_key(|(depth, _)| *depth)
+    else {
+        return false;
+    };
+    // Word takes the row's keep flag from the first paragraph of its first cell.
+    items
+        .iter()
+        .find_map(|item| match item {
+            Placed::Lines { path, story: own, para, .. } if path.0.len() == depth && path.0.last() == Some(&0) && *own == story => {
+                Some(para.rp.keep_next)
+            }
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+fn row_can_start(row: &wordcraft_doc::Row, laid: &table::RowLayout, room: f32, page_height: f32) -> bool {
+    if laid.height <= room + 0.01 {
+        return true;
+    }
+    if row.props.header || row.props.cant_split || (row.props.height_rule == HeightRule::Exact && row.props.height.is_some_and(|h| h > 0.0)) {
+        return false;
+    }
+    if row.props.height_rule == HeightRule::AtLeast && row.props.height.is_some_and(|h| h > room + 0.01 && h <= page_height + 0.01) {
+        return false;
+    }
+    table::split_row(laid, room).is_some()
+}
+
 fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, block: usize, body_top: f32) {
     pb.prev = None;
     let width = pb.col_w();
@@ -3676,6 +3744,19 @@ fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, bl
     // table (e.g. 3 header rows over 30 000 pages).
     const MAX_HEADER_REPEATS: usize = 200_000;
     let mut header_repeats = 0usize;
+    // Resolve kept chains once; nested paragraphs cannot keep their enclosing row.
+    let mut kept: Vec<(usize, f32)> = (0..tl.rows.len()).map(|i| (i, 0.0)).collect();
+    for i in (0..tl.rows.len().saturating_sub(1)).rev() {
+        let Some(row) = tl.rows.get(i) else { continue };
+        if i < header_rows.len() || !row_keeps_next(row) {
+            continue;
+        }
+        let Some((end, height)) = kept.get(i + 1).copied() else { continue };
+        if let Some(group) = kept.get_mut(i) {
+            *group = (end, row.height + height);
+        }
+    }
+    let repeated_height: f32 = header_rows.iter().filter_map(|i| tl.rows.get(*i)).map(|r| r.height).sum();
     let place = |pb: &mut PageBuilder, row: &table::RowLayout| {
         let (x, y) = (pb.col_x() + tl.x, pb.y);
         if let Some(pg) = pb.page() {
@@ -3714,7 +3795,23 @@ fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, bl
         // Each pass places the part of the row that fits, then breaks the page.
         for _ in 0..1000 {
             let cur = rest.as_ref().unwrap_or(row);
-            if pb.y + cur.height <= pb.bottom + 0.01 {
+            // A fitting kept row follows the next row when that row cannot start below it.
+            // Move only the prefix's start; an oversized follower cannot separate its kept rows.
+            let defer_kept = pb.y + cur.height <= pb.bottom + 0.01
+                && !pb.web
+                && !pb.at_top()
+                && !fresh
+                && rest.is_none()
+                && !ri.checked_sub(1).and_then(|prev| kept.get(prev)).is_some_and(|&(end, _)| end >= ri)
+                && kept.get(ri).is_some_and(|&(end, height)| {
+                    if end == ri {
+                        return false;
+                    }
+                    let (Some(next), Some(laid)) = (t.rows.get(end), tl.rows.get(end)) else { return false };
+                    let page_height = pb.bottom - body_top - repeated_height;
+                    height <= page_height + 0.01 && !row_can_start(next, laid, pb.bottom - pb.y - height, page_height)
+                });
+            if pb.y + cur.height <= pb.bottom + 0.01 && !defer_kept {
                 break;
             }
             // Measured in Word: a row with an at-least height doesn't split where less than that
@@ -3725,7 +3822,7 @@ fn place_table(ctx: &mut Ctx, pb: &mut PageBuilder, t: &wordcraft_doc::Table, bl
                     r.props.height_rule == wordcraft_doc::props::HeightRule::AtLeast
                         && r.props.height.is_some_and(|h| h > room + 0.01 && h <= pb.bottom - body_top + 0.01)
                 });
-            let split = if splittable && !short_of_min { table::split_row(cur, room) } else { None };
+            let split = if splittable && !short_of_min && !defer_kept { table::split_row(cur, room) } else { None };
             match split {
                 Some((a, b)) => {
                     place(pb, &a);
@@ -4126,6 +4223,8 @@ pub fn now_ms() -> f64 {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_autospace;
 #[cfg(test)]
 mod tests_bidi;
 #[cfg(test)]

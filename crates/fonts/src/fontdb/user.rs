@@ -422,7 +422,7 @@ fn write_unique(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const FAMILY: &str = "Userfont Sans";

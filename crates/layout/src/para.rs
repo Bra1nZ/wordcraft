@@ -6,14 +6,15 @@ use std::sync::Arc;
 
 use wordcraft_doc::math::MathJc;
 use wordcraft_doc::numbering::{Level, LevelSuffix};
-use wordcraft_doc::para::{COLUMN_BREAK, InlineObject, LINE_BREAK, NoteKind, OBJ, PAGE_BREAK, RubyAlign, SOFT_HYPHEN, WrapText};
+use wordcraft_doc::para::{COLUMN_BREAK, InlineObject, LINE_BREAK, NoteKind, OBJ, PAGE_BREAK, PTabAlign, PTabBase, RubyAlign, SOFT_HYPHEN, WrapText};
 use wordcraft_doc::props::{Align, CharProps, LineSpacing, ParaProps, TabAlign, TabLeader, TabStop};
 use wordcraft_doc::resolve::{ResolvedChar, ResolvedPara};
+use wordcraft_doc::section::NumFormat;
 use wordcraft_doc::{Document, Paragraph};
 use wordcraft_fonts::FaceRef;
 
 use crate::NumeralMode;
-use crate::fields::{FIELD_SHADING, FieldCtx, field_code_text, field_text_on};
+use crate::fields::{FIELD_SHADING, FieldCtx, field_code_text, field_text_on, reference_link};
 
 /// How a run set in one of Word's symbol fonts (Symbol, Wingdings, Wingdings 2/3, Webdings)
 /// shows its characters. Those fonts are proprietary and usually missing: a substitute has other
@@ -60,6 +61,21 @@ impl<'a> SymbolRun<'a> {
             _ => u,
         }
     }
+}
+
+/// Whether a bullet level's `text` has a private-use character that no installed font draws:
+/// its font isn't installed (or lacks it) and it isn't a symbol-font code with a Unicode
+/// equivalent. Private-use codes mean something different in every font, so another face's
+/// glyph there is an unrelated icon, not a bullet.
+fn undrawable_bullet(text: &str, lvl: &Level, rc: &ResolvedChar) -> bool {
+    let private = |c: char| matches!(u32::from(c), 0xE000..=0xF8FF | 0xF0000..=0x10FFFF);
+    lvl.format == NumFormat::Bullet
+        && text.chars().any(|c| {
+            private(c) && wordcraft_doc::symbol_fonts::symbol_char(&rc.font, c).is_none() && {
+                let r = wordcraft_fonts::word::resolve(&rc.font, rc.bold, rc.italic);
+                r.substituted || !r.face.covers(c)
+            }
+        })
 }
 
 /// A face at a size with the formatting needed to draw it.
@@ -346,6 +362,8 @@ pub struct ParaLayout {
     pub rubies: Vec<RubyLayout>,
     /// Display equations (on lines of their own): cluster index and justification.
     pub displays: Vec<(usize, wordcraft_doc::math::MathJc)>,
+    /// Positional tabs (laid out as tab clusters): cluster index, alignment, base and leader.
+    pub ptabs: Vec<(usize, PTabAlign, PTabBase, TabLeader)>,
     /// Byte ranges of the text laid out as nothing ([`left_out`]): hidden text that is not shown,
     /// tracked deletions in the final text. Resolved as laid out, table formatting included.
     pub left_out: Vec<std::ops::Range<usize>>,
@@ -355,6 +373,9 @@ pub struct ParaLayout {
     pub shown: Vec<(usize, String, Vec<std::ops::Range<usize>>)>,
     /// Shapes drawn around overstruck field text (enclosed characters, `EQ \o`), by cluster index.
     pub enclosures: Vec<(usize, Enclosed)>,
+    /// Room after a cluster between Asian text and Latin text or digits ([`auto_space`]), by
+    /// cluster index, sorted. It is part of the cluster's advance, but takes no room at a line's end.
+    pub auto_space: Vec<(usize, f32)>,
 }
 
 /// A shape drawn over a cluster (an enclosed character's circle, square, triangle or diamond),
@@ -389,8 +410,9 @@ pub struct ParaEnv<'a> {
     pub show_hidden: bool,
     /// Show field codes instead of results ([`crate::LayoutOptions::field_codes`]).
     pub field_codes: bool,
-    /// Leave tracked deletions out, like hidden text (the final, "No Markup" text).
-    pub hide_deleted: bool,
+    /// Which tracked deletions to leave out, like hidden text (all of them in the final, "No
+    /// Markup" text).
+    pub hide_deleted: crate::HideDeleted,
     /// The table style's formatting for text in this paragraph's cell (`None` outside tables).
     pub table: Option<&'a CellText>,
     /// Check spelling (and grammar, as the options say) for squiggles; `None` = no squiggles.
@@ -479,6 +501,54 @@ fn snap_chars(b: &mut Builder, text: &str, grid: &Grid) {
         }
         c.adv = adv;
     }
+}
+
+/// Automatic spacing (`w:autoSpaceDE`, `w:autoSpaceDN`): a quarter of the Asian character's font
+/// size between Asian text and Latin text or digits that touch, across runs. Measured on Word's
+/// PDF of a Chinese document at 16 pt (#2358), as JIS X 4051 asks. A field or note number is
+/// classed by the text it shows. The room goes after the first of the two characters; returns it
+/// by cluster index.
+fn auto_space(b: &mut Builder, text: &str, de: bool, dn: bool) -> Vec<(usize, f32)> {
+    let mut out = Vec::new();
+    if !de && !dn {
+        return out;
+    }
+    let mut shown = b.shown.iter().map(|s| (s.0, s.1.as_str())).peekable();
+    // The previous text cluster: index, its last character, its font size.
+    let mut prev: Option<(usize, char, f32)> = None;
+    for k in 0..b.clusters.len() {
+        let Some(c) = b.clusters.get(k) else { break };
+        match c.kind {
+            ClKind::Text => {}
+            ClKind::Marker if c.adv == 0.0 => continue,
+            _ => {
+                prev = None;
+                continue;
+            }
+        }
+        while shown.next_if(|s| s.0 < k).is_some() {}
+        let s = match shown.peek() {
+            Some(&(i, t)) if i == k => t,
+            _ => text.get(c.start..c.end).unwrap_or(""),
+        };
+        let (Some(first), Some(last)) = (s.chars().next(), s.chars().next_back()) else {
+            prev = None;
+            continue;
+        };
+        let size = b.styles.get(c.style as usize).map_or(0.0, |st| st.size);
+        if let Some((pk, pc, psize)) = prev
+            && let Some(side) = crate::kinsoku::auto_space(pc, first, de, dn)
+        {
+            let asian = if side == crate::kinsoku::AsianSide::Left { psize } else { size };
+            let gap = if asian.is_finite() { (asian / 4.0).clamp(0.0, 400.0) } else { 0.0 };
+            if let Some(pc) = b.clusters.get_mut(pk) {
+                pc.adv += gap;
+                out.push((pk, gap));
+            }
+        }
+        prev = Some((k, last, size));
+    }
+    out
 }
 
 /// An area text wraps around.
@@ -617,6 +687,27 @@ pub(crate) fn remap_range(map_starts: &[usize], orig_of: &[usize], orig_len: usi
     (s.min(e), s.max(e))
 }
 
+/// The bidi levels a piece of text is shaped by.
+#[derive(Clone, Copy)]
+enum Dir<'l> {
+    /// Paragraph text: the paragraph's levels at the piece's offset.
+    Para,
+    /// Text laid out on its own (a field result): these levels, by byte of the text.
+    Own(&'l [u8]),
+    /// Each strong run in its own direction (list labels, ruby, left-to-right results).
+    Guess,
+}
+
+/// The direction of `c` if it is a strong letter (UAX #9 P2): `Some(true)` right to left.
+fn strong_rtl(c: char) -> Option<bool> {
+    use unicode_bidi::BidiClass::{AL, L, R};
+    match unicode_bidi::bidi_class(c) {
+        R | AL => Some(true),
+        L => Some(false),
+        _ => None,
+    }
+}
+
 /// Bidi embedding levels per byte of `text` (UAX #9 rules up to I2), or empty when the
 /// paragraph is left to right and has no right-to-left characters.
 pub fn bidi_levels(text: &str, rtl_para: bool) -> Vec<u8> {
@@ -671,10 +762,42 @@ fn east_asian(c: char) -> bool {
 const MISSING_ROMAN_FONT: &str = "Cambria";
 
 /// The family to look `font` up as: [`MISSING_ROMAN_FONT`] for a missing roman font, else `font`.
+/// A missing Thai font keeps its name: it is drawn in a Thai face, not in Cambria (#1549).
 fn lookup_family<'f>(doc: &Document, font: &'f str) -> &'f str {
     let db = wordcraft_fonts::FontDb::global();
     let roman = doc.settings.roman_fonts.iter().any(|f| f.eq_ignore_ascii_case(font));
-    if roman && !db.has_family(font) && !db.has_family(wordcraft_fonts::word::charset_base_family(font)) { MISSING_ROMAN_FONT } else { font }
+    if roman
+        && !wordcraft_fonts::word::is_thai_family(font)
+        && !wordcraft_doc::symbol_fonts::is_symbol_font(font)
+        && !db.has_family(font)
+        && !db.has_family(wordcraft_fonts::word::charset_base_family(font))
+    {
+        MISSING_ROMAN_FONT
+    } else {
+        font
+    }
+}
+
+/// One face for a run in a Thai font that isn't installed (#1549): Word substitutes one font
+/// (Cordia New) for the whole run, so the Latin letters, digits and ฿ keep the Thai letters' face
+/// and size. `None` unless `font` is a Thai family, it was substituted, and its substitute
+/// `primary` lacks some of the run's Thai or Latin characters; then the first face covering all of
+/// them, if one does. Other families keep Latin text in their own substitute, as Word does.
+pub(crate) fn thai_run_face(font: &str, substituted: bool, primary: FaceRef, text: &str, bold: bool, italic: bool) -> Option<FaceRef> {
+    if !substituted || !wordcraft_fonts::word::is_thai_family(font) {
+        return None;
+    }
+    let run: Vec<char> = text.chars().filter(|c| thai_or_latin(*c)).collect();
+    if run.iter().all(|c| primary.covers(*c)) {
+        return None;
+    }
+    wordcraft_fonts::FontDb::global().fallback_for_run(&run, primary.id(), bold, italic).map(|f| FaceRef::of(&f))
+}
+
+/// Text a Thai substitute draws: Thai letters, digits and signs (฿), and Latin letters, digits
+/// and punctuation.
+fn thai_or_latin(c: char) -> bool {
+    matches!(u32::from(c), 0x0021..=0x024F | 0x0E00..=0x0E7F) && !c.is_whitespace() && !c.is_control() && c != SOFT_HYPHEN
 }
 
 impl<'a> Builder<'a> {
@@ -743,12 +866,11 @@ impl<'a> Builder<'a> {
 
     /// Shape `text` (a piece of the paragraph starting at byte `base`) in one style and append clusters.
     fn shape(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>) {
-        self.shape_with(text, base, rc, kind_override, true);
+        self.shape_with(text, base, rc, kind_override, Dir::Para);
     }
 
-    /// `para_text`: `text` is paragraph text at `base`, so the paragraph's bidi levels apply
-    /// (false for field results and list labels, which are shaped on their own).
-    fn shape_with(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>, para_text: bool) {
+    /// `dir`: the bidi levels `text` is shaped by (see [`Dir`]).
+    fn shape_with(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>, dir: Dir<'_>) {
         if text.is_empty() {
             return;
         }
@@ -770,8 +892,21 @@ impl<'a> Builder<'a> {
             .map(|f| wordcraft_fonts::word::resolve(f, rc.bold, rc.italic))
             .filter(|r| !r.substituted)
             .map(|r| r.face);
-        let use_levels = para_text && !self.levels.is_empty();
-        let context = if self.env.numeral == NumeralMode::Context && use_levels { context_digit_dirs(text, &self.levels, base) } else { Vec::new() };
+        // The levels by byte of `text`, from `lbase` on.
+        let (levels, lbase): (&[u8], usize) = match dir {
+            Dir::Para => (&self.levels, base),
+            Dir::Own(l) => (l, 0),
+            Dir::Guess => (&[], 0),
+        };
+        let use_levels = !levels.is_empty();
+        let context = if self.env.numeral == NumeralMode::Context && use_levels { context_digit_dirs(text, levels, lbase) } else { Vec::new() };
+        // A missing Thai font: one face for the run's Thai and Latin text (#1549). A run with its
+        // own complex-script font keeps that font for the Thai letters.
+        let run_face: Option<FaceRef> = if primary_cs.is_none_or(|f| f.id() == primary.id()) {
+            thai_run_face(&rc.font, resolved.substituted, primary, text, rc.bold, rc.italic)
+        } else {
+            None
+        };
         // One fallback face for the run's East Asian characters: the first face in fallback order
         // covering every character the primary font lacks, so the run draws in a single CJK face
         // instead of mixing faces per character (e.g. a bundled Japanese Mincho for JIS-covered
@@ -785,7 +920,7 @@ impl<'a> Builder<'a> {
             if ea.is_empty() {
                 None
             } else {
-                wordcraft_fonts::FontDb::global().fallback_for_east_asian(&ea, primary.id(), rc.bold, rc.italic).map(|f| FaceRef::of(&f))
+                wordcraft_fonts::FontDb::global().fallback_for_run(&ea, primary.id(), rc.bold, rc.italic).map(|f| FaceRef::of(&f))
             }
         };
         // Split by font coverage (fallback faces), small caps case, script formatting and direction.
@@ -793,7 +928,7 @@ impl<'a> Builder<'a> {
         let mut cur: Option<SegKey> = None;
         let mut segs: Vec<(usize, usize, SegKey)> = Vec::new();
         for (i, c) in text.char_indices() {
-            let rtl = use_levels && self.levels.get(base + i).is_some_and(|l| l % 2 == 1);
+            let rtl = use_levels && levels.get(lbase + i).is_some_and(|l| l % 2 == 1);
             // A symbol-font character becomes its Unicode symbol (#776).
             let c = show(c);
             // Displayed form (Word › Numeral): one char in, one char out. Coverage and the
@@ -809,6 +944,8 @@ impl<'a> Builder<'a> {
             let face = match cur {
                 Some(k) if mark => k.face,
                 _ if !complex && east_asian(c) && primary_ea.is_some_and(|f| f.covers(c)) => primary_ea,
+                // The run's one substitute face for a missing Thai font (#1549).
+                _ if !c.is_control() && c != SOFT_HYPHEN && run_face.is_some_and(|f| f.covers(dc)) => run_face,
                 _ if prim.covers(dc) || c.is_whitespace() || c.is_control() || c == SOFT_HYPHEN => None,
                 // Stay in the fallback face the word started in while it covers the letters.
                 Some(SegKey { face: Some(f), .. }) if f.covers(dc) => Some(f),
@@ -945,8 +1082,14 @@ impl<'a> Builder<'a> {
 
     /// One cluster for a whole object with its display text (fields, note references).
     fn shape_atomic(&mut self, text: &str, start: usize, end: usize, rc: &Arc<ResolvedChar>) {
+        // Right-to-left text in the result reads like ordinary text (UAX #9, #1670): the result is
+        // an isolate whose direction is its first strong letter's (else the text's around the
+        // field), and each level run is shaped (mirrored, joined) and placed in that direction.
+        let around = self.levels.get(start).is_some_and(|l| l % 2 == 1);
+        let rtl_base = text.chars().find_map(strong_rtl).unwrap_or(around);
+        let lv = bidi_levels(text, rtl_base);
         let before = self.clusters.len();
-        self.shape_with(text, start, rc, None, false);
+        self.shape_with(text, start, rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) });
         let added: Vec<Cluster> = self.clusters.drain(before..).collect();
         let Some(first) = added.first() else {
             let si = self.style(rc, None, false);
@@ -966,15 +1109,23 @@ impl<'a> Builder<'a> {
             });
             return;
         };
-        // Merge into one cluster: rebase glyph dx onto the first cluster, and keep each glyph's
-        // text (a ligature's glyph takes the letters of the clusters after it that have none).
+        let order = if lv.is_empty() {
+            (0..added.len()).collect()
+        } else {
+            let cl_lv: Vec<u8> = added.iter().map(|c| lv.get(c.start.saturating_sub(start)).copied().unwrap_or(u8::from(rtl_base))).collect();
+            visual_order(&cl_lv)
+        };
+        // Merge into one cluster: rebase glyph dx onto the first cluster drawn, and keep each
+        // glyph's text (a ligature's glyph takes the letters of the clusters after it that have none).
         let mut x = 0.0;
-        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
-        for c in &added {
+        for c in order.iter().filter_map(|&i| added.get(i)) {
             for g in self.glyphs.get_mut(c.g0 as usize..c.g1 as usize).into_iter().flatten() {
                 g.dx += x;
             }
             x += c.adv;
+        }
+        let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+        for c in &added {
             let (a, b) = (c.start.saturating_sub(start), c.end.saturating_sub(start));
             if c.g1 <= c.g0 {
                 let from = ranges.last().map(|r| r.start);
@@ -1149,7 +1300,7 @@ impl Builder<'_> {
         self.shape_atomic(base, start, end, rc);
         let ci = self.clusters.len().checked_sub(1)?;
         let (bc, bg) = (self.clusters.len(), self.glyphs.len());
-        self.shape_with(ruby, 0, ruby_rc, None, false);
+        self.shape_with(ruby, 0, ruby_rc, None, Dir::Guess);
         let cl: Vec<Cluster> = self.clusters.drain(bc..).collect();
         let ruby_w: f32 = cl.iter().map(|c| c.adv).sum();
         let base_w = self.clusters.get(ci).map_or(0.0, |c| c.adv);
@@ -1192,8 +1343,8 @@ impl Builder<'_> {
 
 /// Whether text with this formatting is left out of the layout: hidden text unless it is shown, and
 /// tracked deletions in the final text. It takes no room, draws nothing and is no place to break.
-pub(crate) fn left_out(rc: &ResolvedChar, show_hidden: bool, hide_deleted: bool) -> bool {
-    (rc.hidden && !show_hidden) || (rc.del.is_some() && hide_deleted)
+pub(crate) fn left_out(doc: &Document, rc: &ResolvedChar, show_hidden: bool, hide_deleted: crate::HideDeleted) -> bool {
+    (rc.hidden && !show_hidden) || hide_deleted.hides(doc, rc.del)
 }
 
 /// Lay out one paragraph.
@@ -1252,6 +1403,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
     let mut enclosures = Vec::new();
     let mut rubies = Vec::new();
     let mut displays = Vec::new();
+    let mut ptabs = Vec::new();
     let mut eq_counter = env.eq_number;
     let math_props = doc.settings.math.clone().unwrap_or_default();
     // The byte ranges of runs left out of the layout, in order, adjacent runs merged.
@@ -1262,7 +1414,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
         let rc = resolve(props);
         runs.push(ProofRun::of(range.clone(), &rc));
         let Some(text) = p.text.get(range.clone()) else { continue };
-        if left_out(&rc, b.env.show_hidden, b.env.hide_deleted) {
+        if left_out(doc, &rc, b.env.show_hidden, b.env.hide_deleted) {
             match left.last_mut() {
                 Some(last) if last.end == range.start => last.end = range.end,
                 _ => left.push(range.clone()),
@@ -1271,7 +1423,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
             let g = b.glyphs.len() as u32;
             // Word still prints the note of a hidden reference mark (and numbers it); a deleted
             // reference is gone from the final text, note and all.
-            let keeps_notes = !(rc.del.is_some() && b.env.hide_deleted);
+            let keeps_notes = !b.env.hide_deleted.hides(doc, rc.del);
             for (i, c) in text.char_indices() {
                 let mut note = None;
                 if c == OBJ {
@@ -1384,6 +1536,15 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
                                     None => {
                                         let (t, page_dep) = field_text_on(instr, result, env.fields, env.fields.page_at(start));
                                         has_page_fields |= page_dep;
+                                        let rc = if rc.link.is_none()
+                                            && let Some(link) = reference_link(instr)
+                                        {
+                                            let mut linked = (*rc).clone();
+                                            linked.link = Some(link);
+                                            Arc::new(linked)
+                                        } else {
+                                            rc.clone()
+                                        };
                                         b.shape_atomic(&t, start, end, &rc);
                                     }
                                 }
@@ -1445,6 +1606,10 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
                             }
                         }
                         Some(InlineObject::Opaque { text, .. }) => b.shape_atomic(text, start, end, &rc),
+                        Some(InlineObject::PositionalTab { align, relative_to, leader }) => {
+                            push(&mut b, ClKind::Tab, 0.0, 0.0);
+                            ptabs.push((b.clusters.len() - 1, *align, *relative_to, *leader));
+                        }
                         _ => push(&mut b, ClKind::Marker, 0.0, 0.0),
                     }
                 }
@@ -1457,6 +1622,9 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
     if rp.snap_to_grid {
         snap_chars(&mut b, &p.text, &env.grid);
     }
+    // Text on a character grid keeps to its cells.
+    let auto_space =
+        if rp.snap_to_grid && env.grid.chars.is_some() { Vec::new() } else { auto_space(&mut b, &p.text, rp.auto_space_de, rp.auto_space_dn) };
     // Break opportunities and hyphenation points come from the text as laid out: hidden text that is
     // not shown and, without markup, tracked deletions are left out, so a space or soft hyphen there
     // is no place to break, and words are hyphenated as they read.
@@ -1511,12 +1679,18 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
     let label = env.label.as_ref().filter(|_| !break_only).map(|(text, lvl)| {
         let lc = p.mark.clone().overlaid(&lvl.chr);
         let rc = resolve(&lc);
+        // A bullet no installed font can draw would come from whatever icon font has its
+        // private-use code (Font Awesome's Twitter logo at U+F081, #1683): it shows the level's
+        // default bullet instead.
+        let fixed = undrawable_bullet(text, lvl, &rc)
+            .then(|| wordcraft_doc::numbering::default_bullet(usize::from(rp.numbering.map_or(0, |n| n.level))).to_string());
+        let text: &str = fixed.as_deref().unwrap_or(text);
         // A Symbol/Wingdings bullet (U+F0B7…) is drawn as its Unicode equivalent when the font
         // isn't installed (shaping maps it); the label's text reads as that character too.
         let shown = |t: &str| -> String { wordcraft_doc::symbol_fonts::map_text(&rc.font, t) };
         let before_c = b.clusters.len();
         let before_g = b.glyphs.len();
-        b.shape_with(text, 0, &rc, None, false);
+        b.shape_with(text, 0, &rc, None, Dir::Guess);
         let mut cl: Vec<Cluster> = b.clusters.drain(before_c..).collect();
         // A right-to-left paragraph's label reads right to left too ("1." shows as ".1").
         if rp.bidi {
@@ -1575,11 +1749,16 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
         maths,
         rubies,
         displays,
+        ptabs,
         left_out: Vec::new(),
         enclosures,
+        auto_space,
     };
     let auto = env.doc.settings.auto_hyphenation && !pl.rp.suppress_hyphens;
     pl.hyph_after = hyphenation_points(&text, to_para, &pl, auto, env.doc.settings.hyphenate_caps, &runs);
+    // A paragraph whose text and mark are all a deletion the layout leaves out (a deleted
+    // paragraph in the final text, or moved-away text marked Hidden) is gone: it takes no room.
+    let gone = env.hide_deleted.hides(doc, mark_rc.del) && (p.text.is_empty() || left.first() == Some(&(0..p.text.len())));
     pl.left_out = left;
     for k in pl.hyph_after.clone() {
         if let Some(c) = pl.clusters.get_mut(k as usize) {
@@ -1587,7 +1766,27 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
         }
     }
     break_lines(&mut pl, env, mark_style, env.label.as_ref().map(|(_, l)| l));
+    if gone {
+        collapse(&mut pl);
+    }
     pl
+}
+
+/// Lays a paragraph out as nothing: no height, no spacing, no label, its lines (kept for the
+/// caret and hit testing) all at its top with no height.
+fn collapse(pl: &mut ParaLayout) {
+    for l in &mut pl.lines {
+        l.top = 0.0;
+        l.height = 0.0;
+        l.baseline = 0.0;
+    }
+    pl.height = 0.0;
+    pl.rp.space_before = 0.0;
+    pl.rp.space_after = 0.0;
+    pl.label = None;
+    // Its shading and borders would be drawn across the page at no height.
+    pl.rp.shading = None;
+    pl.rp.borders = None;
 }
 
 /// Next tab stop after `x` (column coordinates): explicit stops, the hanging-indent implicit stop,
@@ -1610,6 +1809,21 @@ fn next_tab(x: f32, tabs: &[TabStop], default_tab: f32, hanging_at: Option<f32>)
         let n = if x < -0.01 { ((x - 0.01) / d).ceil() } else { ((x + 0.01) / d).floor() + 1.0 };
         TabStop { pos: (n * d).min(1e6), align: TabAlign::Left, leader: TabLeader::None }
     })
+}
+
+/// A positional tab's stop (column coordinates): the left edge, centre or right edge of the
+/// column (`margin`) or of the space between the indents (`indent`), whatever the tab stops.
+fn ptab_stop(align: PTabAlign, base: PTabBase, leader: TabLeader, width: f32, indents: (f32, f32)) -> TabStop {
+    let (lo, hi) = match base {
+        PTabBase::Margin => (0.0, width),
+        PTabBase::Indent => (indents.0, width - indents.1),
+    };
+    let (pos, align) = match align {
+        PTabAlign::Left => (lo, TabAlign::Left),
+        PTabAlign::Center => ((lo + hi) / 2.0, TabAlign::Center),
+        PTabAlign::Right => (hi, TabAlign::Right),
+    };
+    TabStop { pos, align, leader }
 }
 
 fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Option<&Level>) {
@@ -1765,9 +1979,16 @@ fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Optio
                 ClKind::Tab => {
                     has_tab = true;
                     resolve_tab(pl, &mut pending_tab, &mut xs, c0, x, &mut x);
-                    let stop = next_tab(x, &rp.tabs, default_tab, hanging_at);
+                    let ptab = pl.ptabs.iter().find(|t| t.0 == j).map(|&(_, a, b, l)| ptab_stop(a, b, l, width, (rp.indent_left, rp.indent_right)));
+                    let stop = ptab.unwrap_or_else(|| next_tab(x, &rp.tabs, default_tab, hanging_at));
+                    // A positional tab whose place the text has passed goes there on the next line
+                    // (ECMA-376 §17.3.3.23); a line with nothing but markers on it is empty.
+                    if ptab.is_some() && stop.pos < x - 0.01 && (c0..j).any(|k| pl.clusters.get(k).is_some_and(|c| c.kind != ClKind::Marker)) {
+                        end = LineEnd::Wrap;
+                        break;
+                    }
                     xs.push(x);
-                    if stop.pos > right_edge + 0.01 && j > c0 && stop.align == TabAlign::Left {
+                    if ptab.is_none() && stop.pos > right_edge + 0.01 && j > c0 && stop.align == TabAlign::Left {
                         // Tab past the right indent wraps (Word moves it to the next line).
                         if let Some(c) = pl.clusters.get_mut(j) {
                             c.adv = 0.0;
@@ -1817,7 +2038,8 @@ fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Optio
                 }
             });
             let shrink = if shrink_spaces && !has_tab { space_w * MAX_SPACE_SHRINK } else { 0.0 };
-            let fits = absorbs || x + c.adv <= right_edge + shrink + 0.01 || c.kind == ClKind::Space || c.kind == ClKind::Marker;
+            let fits =
+                absorbs || x + c.adv - pl.auto_space_after(j) <= right_edge + shrink + 0.01 || c.kind == ClKind::Space || c.kind == ClKind::Marker;
             // A line's first item stays on it even when it doesn't fit; markers before it
             // (a content control's start, a bookmark) take no room and don't count (Word).
             if !fits && (c0..j).any(|k| pl.clusters.get(k).is_some_and(|c| c.kind != ClKind::Marker)) {
@@ -2050,7 +2272,11 @@ fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Optio
                 Some(ClKind::Space) | Some(ClKind::Marker) | Some(ClKind::LineBreak) | Some(ClKind::PageBreak) | Some(ClKind::ColumnBreak) => {
                     content_end = xs.get(k - c0).copied().unwrap_or(content_end);
                 }
-                _ => break,
+                _ => {
+                    // The automatic space after the line's last character goes with the wrap.
+                    content_end -= pl.auto_space_after(k);
+                    break;
+                }
             }
         }
         let slack = right_edge - content_end;
@@ -2501,6 +2727,10 @@ fn resolve_tab(pl: &mut ParaLayout, pending: &mut Option<(usize, TabStop, f32)>,
 }
 
 impl ParaLayout {
+    /// The automatic space in cluster `k`'s advance ([`auto_space`]), 0 without one.
+    fn auto_space_after(&self, k: usize) -> f32 {
+        self.auto_space.binary_search_by_key(&k, |a| a.0).ok().and_then(|i| self.auto_space.get(i)).map_or(0.0, |a| a.1)
+    }
     /// The line the list label is drawn on: the first, unless the paragraph opens with a page
     /// break, when Word draws it with the text on the next page.
     pub fn label_line(&self) -> usize {
@@ -2527,6 +2757,21 @@ impl ParaLayout {
             }
         }
         l.xs.last().copied()
+    }
+    /// The farthest right a caret goes on left-to-right line `li`: spaces at the end of a line
+    /// hang past its right edge, but the caret after them stays at the edge, as in Word (#2146);
+    /// text that overflows the line still carries it. `None` on bidirectional lines.
+    pub fn caret_limit(&self, li: usize) -> Option<f32> {
+        let l = self.lines.get(li)?;
+        if !l.vis.is_empty() {
+            return None;
+        }
+        let ink = (l.c0..l.c1).rev().find(|&k| self.clusters.get(k).is_some_and(|c| c.kind != ClKind::Space));
+        let end = match ink {
+            Some(k) => l.xs.get(k + 1 - l.c0).copied(),
+            None => l.xs.first().copied(),
+        };
+        Some(end.unwrap_or(l.left).max(l.right))
     }
     /// The line holding offset `off` (a position at a wrap point belongs to the next line).
     pub fn line_of(&self, off: usize) -> usize {
@@ -2704,9 +2949,11 @@ pub fn proof_text(p: &wordcraft_doc::Paragraph) -> String {
 mod label_spacing_tests {
     use super::*;
 
+    const ROBOTO_METRICS: (f32, f32) = (11.1328125, 2.9296875);
+
     // Inject measured metric pairs after shaping so these regressions do not depend on
     // the fonts installed on the test host. Word for Mac 16.113.3, original Roboto probes.
-    fn measured_label_lines(spacing: LineSpacing, label_metrics: (f32, f32), label_ascent: f32, wrap: bool) -> Vec<Line> {
+    fn measured_label_lines(spacing: LineSpacing, label_metrics: (f32, f32), label_ascent: f32, wrap: bool, text_metrics: (f32, f32)) -> Vec<Line> {
         let doc = Document::new();
         let fields = FieldCtx::default();
         let level = Level { chr: CharProps { size: Some(24.0), ..Default::default() }, suffix: LevelSuffix::Nothing, ..Default::default() };
@@ -2716,7 +2963,7 @@ mod label_spacing_tests {
             width: 100.0,
             label: Some(("•".into(), level.clone())),
             show_hidden: false,
-            hide_deleted: false,
+            hide_deleted: Default::default(),
             table: None,
             proofing: None,
             field_codes: false,
@@ -2734,7 +2981,7 @@ mod label_spacing_tests {
         label.ascent = label_ascent;
         let label_style = label.style;
         for (i, st) in pl.styles.iter_mut().enumerate() {
-            (st.ascent, st.descent) = if i == label_style as usize { label_metrics } else { (11.1328125, 2.9296875) };
+            (st.ascent, st.descent) = if i == label_style as usize { label_metrics } else { text_metrics };
         }
         let mark_style = pl.clusters[0].style;
         break_lines(&mut pl, &env, mark_style, Some(&level));
@@ -2742,9 +2989,18 @@ mod label_spacing_tests {
     }
 
     #[test]
+    fn fallback_label_ascent() {
+        let body = (1921.0 / 2048.0 * 11.0, 434.0 / 2048.0 * 11.0);
+        let low = measured_label_lines(LineSpacing::Multiple(1.15), (9.802246, 2.379395), 9.802246, false, body);
+        let tall = measured_label_lines(LineSpacing::Multiple(1.15), (11.0, 3.586), 11.0, false, body);
+        assert!((low[0].height - 14.546265).abs() < 0.001);
+        assert!((tall[0].height - low[0].height - 0.682129).abs() < 0.001);
+    }
+
+    #[test]
     fn large_label_overflow_is_not_multiplied() {
         for (multiple, expected) in [(1.0, 25.20), (1.25, 28.80), (2.0, 39.36)] {
-            let lines = measured_label_lines(LineSpacing::Multiple(multiple), (22.265625, 5.859375), 22.265625, false);
+            let lines = measured_label_lines(LineSpacing::Multiple(multiple), (22.265625, 5.859375), 22.265625, false, ROBOTO_METRICS);
             assert!((lines[0].height - expected).abs() <= 0.25, "{multiple}: {} vs {expected}", lines[0].height);
             if multiple == 1.0 {
                 assert!((lines[0].height - lines[0].baseline - 2.9296875).abs() < 0.001, "label descent must not move the text baseline");
@@ -2754,7 +3010,7 @@ mod label_spacing_tests {
 
     #[test]
     fn small_label_descent_does_not_inflate_text_spacing() {
-        let lines = measured_label_lines(LineSpacing::Multiple(1.25), (8.499023, 3.5009766), 9.0, false);
+        let lines = measured_label_lines(LineSpacing::Multiple(1.25), (8.499023, 3.5009766), 9.0, false, ROBOTO_METRICS);
         assert!((lines[0].height - 17.52).abs() <= 0.25, "{}", lines[0].height);
     }
 
@@ -2763,7 +3019,7 @@ mod label_spacing_tests {
         // Apple Symbols 24 pt: full leading gives an 18 pt label ascent. The text
         // pitch is still Roboto 12 pt. A shorter final fallback run must not hide it.
         for metrics in [(16.998047, 7.001953), (8.0, 3.0)] {
-            let lines = measured_label_lines(LineSpacing::Multiple(1.25), metrics, 18.0, false);
+            let lines = measured_label_lines(LineSpacing::Multiple(1.25), metrics, 18.0, false, ROBOTO_METRICS);
             assert!((lines[0].height - 24.48).abs() <= 0.25, "{}", lines[0].height);
         }
     }
@@ -2773,7 +3029,7 @@ mod label_spacing_tests {
         for (metrics, ascent, expected) in
             [((22.265625, 5.859375), 22.265625, 25.20), ((8.499023, 3.5009766), 9.0, 13.92), ((16.998047, 7.001953), 18.0, 20.88)]
         {
-            let lines = measured_label_lines(LineSpacing::AtLeast(12.0), metrics, ascent, false);
+            let lines = measured_label_lines(LineSpacing::AtLeast(12.0), metrics, ascent, false, ROBOTO_METRICS);
             assert!((lines[0].height - expected).abs() <= 0.25, "{}", lines[0].height);
         }
     }
@@ -2781,18 +3037,33 @@ mod label_spacing_tests {
     #[test]
     fn labels_keep_fixed_and_minimum_spacing_rules() {
         for (spacing, expected) in [(LineSpacing::Exactly(24.0), 24.0), (LineSpacing::AtLeast(30.0), 30.0)] {
-            let lines = measured_label_lines(spacing, (22.265625, 5.859375), 22.265625, false);
+            let lines = measured_label_lines(spacing, (22.265625, 5.859375), 22.265625, false, ROBOTO_METRICS);
             assert!((lines[0].height - expected).abs() < 0.001);
         }
     }
 
     #[test]
     fn label_overflow_only_affects_the_first_wrapped_line() {
-        let lines = measured_label_lines(LineSpacing::Multiple(1.25), (22.265625, 5.859375), 22.265625, true);
+        let lines = measured_label_lines(LineSpacing::Multiple(1.25), (22.265625, 5.859375), 22.265625, true, ROBOTO_METRICS);
         assert!(lines.len() > 1);
         assert!((lines[0].height - 28.80).abs() <= 0.25);
         for line in &lines[1..] {
             assert!((line.height - 17.52).abs() <= 0.25, "{}", line.height);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbols_ignore_roman_hint() {
+        let mut d = Document::new();
+        d.settings.roman_fonts = vec!["Symbol (PCL6)".into(), "Wingdings".into(), "No Such Roman Font".into()];
+        for family in ["Symbol (PCL6)", "Wingdings"] {
+            assert_eq!(lookup_family(&d, family), family);
+        }
+        assert_eq!(lookup_family(&d, "No Such Roman Font"), MISSING_ROMAN_FONT);
     }
 }

@@ -6,7 +6,7 @@ use wordcraft_doc::connector::{ConnEnd, ShapeExtra};
 use wordcraft_doc::control::{ContentControl, ControlKind, ControlWrap};
 use wordcraft_doc::effects::{Glow, Shadow, ShapeEffects};
 use wordcraft_doc::graphic::{Embedded, Graphic, GraphicItem, GraphicKind};
-use wordcraft_doc::para::{AltText, Anchor, Float, FloatAlign, NoteKind, ShapeKind, Wrap, WrapText, cap_alt};
+use wordcraft_doc::para::{AltText, Anchor, Float, FloatAlign, NoteKind, PTabAlign, PTabBase, ShapeKind, Wrap, WrapText, cap_alt};
 use wordcraft_doc::props::{CharProps, NumChange, PropChange, Rgb, TextColor};
 use wordcraft_doc::table::{Cell, MAX_COLS, MAX_ROWS, Row, Table};
 use wordcraft_doc::{Block, Blocks, InlineObject, Paragraph, PartKind, RevisionKind, Run, para_block};
@@ -30,6 +30,8 @@ const MAX_TABLE_DEPTH: usize = 24;
 const MAX_FIELD_DEPTH: usize = 32;
 /// Deepest text-box-in-text-box nesting.
 const MAX_STORY_DEPTH: usize = 4;
+/// Deepest `v:group` nesting followed (hostile files).
+const MAX_VML_GROUP_DEPTH: usize = 8;
 /// Longest field code we keep (Zotero's citation codes embed item data as JSON).
 const MAX_INSTR: usize = 2 * 1024 * 1024;
 /// Longest legacy form field definition (`w:ffData`) we keep.
@@ -295,17 +297,25 @@ impl Reader<'_> {
     }
 
     fn marker(&mut self, e: &El) -> Option<InlineObject> {
-        let id = e.attr("w:id").unwrap_or("").to_string();
+        let id = e.attr("w:id").map(str::trim).unwrap_or("").to_string();
         match e.name.as_str() {
             "w:bookmarkStart" => {
-                let name = e.attr("w:name").unwrap_or("").to_string();
+                if self.bookmarks.len() >= 100_000 {
+                    return None;
+                }
+                let name = e.attr("w:name").map(str::trim).unwrap_or("").to_string();
                 if name.is_empty() || name.len() > 256 {
                     return None;
                 }
                 self.bookmarks.insert(id, name.clone());
                 Some(InlineObject::BookmarkStart { name })
             }
-            "w:bookmarkEnd" => self.bookmarks.get(&id).map(|n| InlineObject::BookmarkEnd { name: n.clone() }),
+            "w:bookmarkEnd" => self
+                .bookmarks
+                .get(&id)
+                .cloned()
+                .or_else(|| e.attr("w:name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 256).map(str::to_string))
+                .map(|name| InlineObject::BookmarkEnd { name }),
             "w:commentRangeStart" => self.comment_id(&id).map(|id| InlineObject::CommentStart { id }),
             "w:permStart" => {
                 // Bounded: a hostile file can't grow the map without end.
@@ -618,7 +628,15 @@ impl Reader<'_> {
                     f.instr.push_str(&k.text());
                 }
             }
-            "w:tab" | "w:ptab" => self.emit_text(sc, pb, "\t", props),
+            "w:tab" => self.emit_text(sc, pb, "\t", props),
+            // Alignment and base are required (ECMA-376 §17.3.3.23); without them it stays a plain tab.
+            "w:ptab" => match (k.attr("w:alignment").and_then(PTabAlign::from_ooxml), k.attr("w:relativeTo").and_then(PTabBase::from_ooxml)) {
+                (Some(align), Some(relative_to)) => {
+                    let leader = super::props::tab_leader(k.attr("w:leader").unwrap_or("none"));
+                    self.emit_obj(sc, pb, InlineObject::PositionalTab { align, relative_to, leader }, props)
+                }
+                _ => self.emit_text(sc, pb, "\t", props),
+            },
             "w:br" => {
                 if sc.fields.iter().any(|f| f.phase == Phase::Instr) {
                     return;
@@ -662,7 +680,7 @@ impl Reader<'_> {
                 }
             }
             "w:pict" => {
-                if let Some(o) = self.read_vml(sc, k, rels) {
+                for o in self.read_vml_all(sc, k, rels) {
                     self.emit_obj(sc, pb, o, props);
                 }
             }
@@ -879,6 +897,17 @@ impl Reader<'_> {
             Some(e) => (e.instr(), if result.is_empty() { e.text } else { result }),
             None => (f.instr.trim().to_string(), result),
         };
+        // The visible result owns the field's formatting; empty results keep the begin's.
+        let props = f
+            .buf
+            .iter()
+            .find_map(|(it, p)| match it {
+                Item::Text(t) if !t.is_empty() => Some(p),
+                Item::Obj(o) if !o.plain_text().is_empty() => Some(p),
+                _ => None,
+            })
+            .unwrap_or(&f.props)
+            .clone();
         let obj = InlineObject::Field { instr, result, locked: f.locked, dirty: f.dirty, code: false, form: f.form };
         if let Some(parent) = sc.fields.last_mut()
             && !parent.spilled
@@ -887,7 +916,7 @@ impl Reader<'_> {
             parent.instr.push_str(obj.plain_text());
             return;
         }
-        self.emit_obj(sc, pb, obj, &f.props);
+        self.emit_obj(sc, pb, obj, &props);
     }
 
     /// At a paragraph end, open fields can't keep buffering: emit them (empty result) and
@@ -1327,7 +1356,15 @@ impl Reader<'_> {
             part.body.inset = (inset != wordcraft_doc::TEXT_BOX_INSET).then_some(inset);
             part.body.auto_fit = bp.child("a:spAutoFit").is_some();
         }
-        let mut extra = ShapeExtra::default();
+        // The shape style's text colour (`a:fontRef`, often `lt1`: white on the accent fill).
+        if let Some(id) = story
+            && let Some(c) = wsp.child("wps:style").and_then(|s| s.child("a:fontRef"))
+            && let Some(rgb) = super::drawing_color::color(c, &self.doc.settings.theme_colors)
+            && let Some(part) = self.doc.parts.get_mut(&id)
+        {
+            part.body.auto_color = Some(rgb);
+        }
+        let mut extra = ShapeExtra { dash: super::shape_style::line_dash(ln), ..Default::default() };
         // A rounded rectangle's own corner (`adj`, ECMA-376 §20.1.10.56); other presets drawn as
         // rounded rectangles keep the default.
         if prst == "roundRect" {
@@ -1380,20 +1417,125 @@ impl Reader<'_> {
         self.doc.add_part(PartKind::TextBox, blocks)
     }
 
-    /// Legacy VML pictures, text boxes, lines, rectangles, ovals and preset shapes (best effort).
+    /// Every legacy VML drawing in one `w:pict`, in document order: a `w:pict` may hold any
+    /// number of shapes (ECMA-376 Part 4, VML), and each one is its own object. A `v:group`
+    /// becomes an [`InlineObject::Group`].
+    fn read_vml_all(&mut self, sc: &mut StoryCtx, pict: &El, rels: &Rels) -> Vec<InlineObject> {
+        let mut out = Vec::new();
+        for e in pict.els().filter(|e| e.name.starts_with("v:") && e.local() != "shapetype") {
+            if out.len() >= wordcraft_doc::para::MAX_GROUP_CHILDREN {
+                break;
+            }
+            if sc.in_hf
+                && let Some(wm) = vml_watermark(e)
+            {
+                // The document's watermark (the first one found); drawn on every page, not as
+                // a shape, so it is not one of the objects this picture contributes.
+                self.doc.settings.watermark.get_or_insert(wm);
+                continue;
+            }
+            let o = if e.local() == "group" { self.read_vml_group(sc, pict, e, rels) } else { self.read_vml_shape(sc, pict, e, rels, None) };
+            out.extend(o);
+        }
+        out
+    }
+
+    /// The first VML drawing in `pict`, for the places that show a single one: an OLE object's
+    /// picture and a `mc:Fallback` preview.
     fn read_vml(&mut self, sc: &mut StoryCtx, pict: &El, rels: &Rels) -> Option<InlineObject> {
-        let shape = pict.els().find(|e| e.name.starts_with("v:") && e.local() != "shapetype")?;
-        if sc.in_hf
-            && let Some(wm) = vml_watermark(shape)
-        {
-            // The document's watermark (the first one found); drawn on every page, not as a shape.
-            self.doc.settings.watermark.get_or_insert(wm);
+        self.read_vml_all(sc, pict, rels).into_iter().next()
+    }
+
+    /// A `v:group`: its own box from its `style`, its members in the space `coordsize` and
+    /// `coordorigin` give it, nested groups flattened into it as [`Self::group_members`] does for
+    /// DrawingML. `None` when it has no member we can show. `pict` is the picture the group sits
+    /// in, where a member's `v:shapetype` is written.
+    fn read_vml_group(&mut self, sc: &mut StoryCtx, pict: &El, grp: &El, rels: &Rels) -> Option<InlineObject> {
+        let style = grp.attr("style").unwrap_or("");
+        let len = |k: &str| vml_style(style, k).and_then(|v| measure(v, 1.0)).unwrap_or(0.0).clamp(0.0, crate::units::MAX_LEN_PT);
+        let (w, h) = (len("width"), len("height"));
+        let float = vml_float(grp, style);
+        // The members' space; without a usable `coordsize` it is the group's own box.
+        let (ch_w, ch_h) = vml_coordpair(grp, "coordsize").filter(|(cw, ch)| *cw > 0.0 && *ch > 0.0).unwrap_or((w.max(1.0), h.max(1.0)));
+        let (cx, cy) = vml_coordpair(grp, "coordorigin").unwrap_or((0.0, 0.0));
+        let mut children = Vec::new();
+        self.vml_group_members(sc, pict, grp, rels, (-cx, -cy, 1.0, 1.0), 0, &mut children);
+        if children.is_empty() {
             return None;
         }
+        Some(InlineObject::Group { w, h, float, ch_w, ch_h, children, canvas: None })
+    }
+
+    /// The members of VML group `g` into `out`, mapped into the outermost group's space by `t`
+    /// (x0, y0, sx, sy: outer = x0 + inner × sx). A member is placed by `left`/`top` in that
+    /// space, except a `v:line`, which carries its own offset in `from`.
+    fn vml_group_members(
+        &mut self,
+        sc: &mut StoryCtx,
+        pict: &El,
+        g: &El,
+        rels: &Rels,
+        t: (f32, f32, f32, f32),
+        depth: usize,
+        out: &mut Vec<wordcraft_doc::para::GroupChild>,
+    ) {
+        let (x0, y0, sx, sy) = t;
+        let max = crate::units::MAX_LEN_PT;
+        let fit = |v: f32, lo: f32| wordcraft_geom::finite(v).clamp(lo, max);
+        for e in g.els() {
+            if out.len() >= wordcraft_doc::para::MAX_GROUP_CHILDREN {
+                return;
+            }
+            if !e.name.starts_with("v:") || e.local() == "shapetype" {
+                continue;
+            }
+            let style = e.attr("style").unwrap_or("");
+            let num = |k: &str| vml_style(style, k).and_then(|v| measure(v, 1.0)).map_or(0.0, wordcraft_geom::finite);
+            let ((ox, oy), (ew, eh)) = ((num("left"), num("top")), (num("width"), num("height")));
+            if e.local() == "group" {
+                if depth >= MAX_VML_GROUP_DEPTH {
+                    continue;
+                }
+                // Its members' space maps onto its own box.
+                let (cw, ch) = vml_coordpair(e, "coordsize").filter(|(cw, ch)| *cw > 0.0 && *ch > 0.0).unwrap_or((ew.max(1.0), eh.max(1.0)));
+                let (cox, coy) = vml_coordpair(e, "coordorigin").unwrap_or((0.0, 0.0));
+                let (kx, ky) = (ew / cw, eh / ch);
+                let nt = (x0 + (ox - cox * kx) * sx, y0 + (oy - coy * ky) * sy, sx * kx, sy * ky);
+                self.vml_group_members(sc, pict, e, rels, nt, depth + 1, out);
+                continue;
+            }
+            let Some(mut obj) = self.read_vml_shape(sc, pict, e, rels, Some((sx, sy))) else { continue };
+            // A member is placed by `x`/`y`, so a line's own offset comes off the member itself.
+            let (dx, dy) = match obj.float_mut() {
+                Some(f) => {
+                    let d = (f.x, f.y);
+                    (f.x, f.y) = (0.0, 0.0);
+                    d
+                }
+                None => (0.0, 0.0),
+            };
+            out.push(wordcraft_doc::para::GroupChild { x: fit(x0 + (ox + dx) * sx, -max), y: fit(y0 + (oy + dy) * sy, -max), obj });
+        }
+    }
+
+    /// One legacy VML picture, text box, line, rectangle, oval or preset shape (best effort).
+    /// `pict` is the picture it sits in, where its `v:shapetype` is written -- for a group's
+    /// member too, since Word writes each shapetype once, beside the group rather than inside
+    /// it. `grp` scales a member from its group's space, and leaves placing it to the caller.
+    fn read_vml_shape(&mut self, sc: &mut StoryCtx, pict: &El, shape: &El, rels: &Rels, grp: Option<(f32, f32)>) -> Option<InlineObject> {
         let style = shape.attr("style").unwrap_or("");
         let len = |k: &str| vml_style(style, k).and_then(|v| measure(v, 1.0)).unwrap_or(0.0).clamp(0.0, crate::units::MAX_LEN_PT);
-        let (mut w, mut h) = (len("width"), len("height"));
-        let mut float = vml_float(shape, style);
+        let (sx, sy) = grp.unwrap_or((1.0, 1.0));
+        let (mut w, mut h) = ((len("width") * sx).min(crate::units::MAX_LEN_PT), (len("height") * sy).min(crate::units::MAX_LEN_PT));
+        // A member of a group never floats: the group does, and places it.
+        let mut float = match grp {
+            Some(_) => {
+                let mut f = Float { hidden: vml_style(style, "visibility").is_some_and(|v| v.eq_ignore_ascii_case("hidden")), ..Float::default() };
+                f.set_spin(vml_spin(style));
+                f
+            }
+            None => vml_float(shape, style),
+        };
         if let Some(img) = shape.find("v:imagedata") {
             let id = img.attr("r:id").or_else(|| img.attr("r:pict"))?;
             let media = self.media_for(rels, id)?;
@@ -1513,7 +1655,7 @@ impl Reader<'_> {
             };
             let ((x0, y0), (x1, y1)) = (pt("from"), pt("to"));
             let max = crate::units::MAX_LEN_PT;
-            (w, h) = ((x1 - x0).abs().min(max), (y1 - y0).abs().min(max));
+            (w, h) = (((x1 - x0).abs() * sx).min(max), ((y1 - y0).abs() * sy).min(max));
             float.x = (float.x + x0.min(x1)).clamp(-max, max);
             float.y = (float.y + y0.min(y1)).clamp(-max, max);
             // Drawn top-left to bottom-right; flipped for the other directions.
@@ -1773,6 +1915,15 @@ fn vml_spt(shape: &El, shapetype: Option<&El>, type_id: Option<&str>) -> Option<
 /// The value of property `key` in a VML `style` attribute (CSS declarations; the last one wins).
 /// The first `v:textbox` under `e` holding text, with its `w:txbxContent` (depth-first, bounded
 /// like `El::find`): in a group, a member's margins go with that member's text.
+/// A VML `coordsize="w,h"` or `coordorigin="x,y"` pair (ECMA-376 Part 4 §14.1.2): the member
+/// space of a group, in its own unitless coordinates.
+fn vml_coordpair(e: &El, name: &str) -> Option<(f32, f32)> {
+    let v = e.attr(name)?;
+    let (x, y) = v.split_once(',')?;
+    let n = |s: &str| measure(s.trim(), 1.0).map(wordcraft_geom::finite);
+    Some((n(x)?, n(y)?))
+}
+
 fn vml_textbox(e: &El, depth: usize) -> Option<(&El, &El)> {
     if depth > crate::xml::MAX_DEPTH {
         return None;

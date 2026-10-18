@@ -83,7 +83,8 @@ document with unsaved changes it replies with an error (the app keeps running an
 stay); save first (`file.save`), or pass `{"force": true}` to discard the changes and close.
 The bare form `{"method": "file.close", "force": true}` (a method name that is a command id) is
 guarded the same way, and only a boolean `true` counts as `force`. A document without unsaved
-changes closes at once (#1268).
+changes closes at once (#1268). Closing closes the document, not the app: the window stays and
+shows no page, and `file.new` or `file.open` goes on from there (#1712).
 
 ### Native printing
 

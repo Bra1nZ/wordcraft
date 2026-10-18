@@ -27,6 +27,8 @@ pub struct RowLayout {
 
 /// A cell of a [`RowLayout`].
 pub struct CellPart {
+    /// Top cell margin and visible border band retained on a continuation.
+    pub(crate) top: f32,
     /// Its items in the row's `items` (its fill, text, borders and cell area).
     pub items: std::ops::Range<usize>,
     /// Where its content ends below the row's top, its last paragraph's space after included
@@ -191,7 +193,7 @@ pub fn measure_table_columns(doc: &wordcraft_doc::Document, t: &Table) -> Vec<(f
                 fields: &fields,
                 show_hidden: false,
                 field_codes: false,
-                hide_deleted: false,
+                hide_deleted: Default::default(),
                 table: text.as_ref(),
                 proofing: None,
                 // Measurement uses a fixed environment (like show_hidden/proofing above).
@@ -745,7 +747,8 @@ pub fn layout_table(ctx: &mut Ctx, story: StoryRef, t: &Table, path: &[u32], ava
                 story,
                 clip: exact && c.h > span_h + 0.01,
             });
-            parts.push(CellPart { items: first..items.len(), end });
+            let top = c.margins[0] + c.borders.top.filter(Border::is_visible).map_or(0.0, |b| b.width.clamp(0.0, 12.0));
+            parts.push(CellPart { top, items: first..items.len(), end });
         }
         out.push(RowLayout { height: rh, items, bottom: bottoms.get(ri).copied().unwrap_or(0.0), cells: parts });
     }
@@ -793,6 +796,18 @@ pub fn split_row(row: &RowLayout, cut: f32) -> Option<(RowLayout, RowLayout)> {
                 .collect()
         })
         .collect();
+    // A cell that widow/orphan control leaves with nothing on this page, though its first line
+    // would fit there, takes the whole row on with it: Word doesn't leave the other cells behind
+    // beside an empty one (observed with synthetic documents).
+    for (items, splits) in cells.iter().zip(&splits) {
+        let first = items.iter().zip(splits).find_map(|(it, &split)| text_lines(it).map(|t| (t, split)));
+        if let Some(((para, l0, _, y), split)) = first
+            && split == l0
+            && para.lines.get(l0).is_some_and(|l| fits(y + l.top - para.lines.get(l0).map_or(0.0, |f| f.top) + l.height))
+        {
+            return None;
+        }
+    }
     // The top of the first thing that moves on in each cell.
     let mut kept_any = false;
     let mut moved = vec![f32::MAX; cells.len()];
@@ -839,13 +854,11 @@ pub fn split_row(row: &RowLayout, cut: f32) -> Option<(RowLayout, RowLayout)> {
     if !kept_any || first_moved == f32::MAX {
         return None;
     }
-    // How far up things move: each cell's first line that moves on goes to the top of the
-    // continuation, keeping a little of the cell's top margin.
-    let shift_to = |top: f32| (top - 2.0).max(0.0);
-    let shifts: Vec<f32> = moved.iter().map(|&m| shift_to(if m < f32::MAX { m } else { first_moved })).collect();
+    // Each cell resumes below its own top margin and border band.
+    let shifts: Vec<f32> = moved.iter().zip(&row.cells).map(|(&m, c)| ((if m < f32::MAX { m } else { first_moved }) - c.top).max(0.0)).collect();
     // The continuation is as tall as the cell needing the most room (what it moves on and the
     // bottom margin, the rest of the row for turned text), and at least the rest of the row.
-    let full = (row.height - shift_to(first_moved)).max(4.0);
+    let full = (row.height - shifts.iter().copied().fold(f32::MAX, f32::min)).max(4.0);
     let mut need = row.height - cut;
     for ((c, &m), &s) in row.cells.iter().zip(&moved).zip(&shifts) {
         if m < f32::MAX {
@@ -955,7 +968,7 @@ pub fn split_row(row: &RowLayout, cut: f32) -> Option<(RowLayout, RowLayout)> {
                 }
             }
         }
-        parts.push(CellPart { items: start..b.len(), end: c.end.map(|e| e - shift) });
+        parts.push(CellPart { top: c.top, items: start..b.len(), end: c.end.map(|e| e - shift) });
     }
     // The part left on the page is placed and never split again.
     Some((
@@ -1204,9 +1217,49 @@ fn autofit(grid: &mut [f32], content: &[(f32, f32)], t: &Table, avail: f32) {
     if short < 0.01 {
         return;
     }
-    let spare: f32 = grid.iter().zip(content).map(|(w, c)| (*w - c.0).max(0.0)).sum();
-    let give = (short / spare.max(0.01)).min(1.0);
+    // Donors give equal widths until they reach their own content minimum.
+    let mut rooms: Vec<_> = grid.iter().zip(content).map(|(w, c)| *w - c.0).filter(|room| *room > 0.0).collect();
+    rooms.sort_by(f32::total_cmp);
+    let mut remaining = short;
+    let mut share = 0.0;
+    for (i, room) in rooms.iter().enumerate() {
+        share = remaining / (rooms.len() - i) as f32;
+        if share <= *room {
+            break;
+        }
+        remaining -= room;
+    }
     for (w, c) in grid.iter_mut().zip(content) {
-        *w = if *w < c.0 { c.0 } else { *w - (*w - c.0) * give };
+        *w = if *w < c.0 { c.0 } else { *w - (*w - c.0).min(share) };
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    #[test]
+    fn autofit_shares_donor_loss() {
+        let table = Table::new(1, 4, 260.0);
+        let mut grid = [30.0, 120.0, 20.0, 90.0];
+        let content = [(28.0, 28.0), (40.0, 120.0), (40.0, 40.0), (30.0, 90.0)];
+        autofit(&mut grid, &content, &table, 260.0);
+        assert_eq!(grid, [28.0, 111.0, 40.0, 81.0]);
+    }
+
+    #[test]
+    fn autofit_exhausts_donors() {
+        let table = Table::new(1, 2, 50.0);
+        let mut grid = [30.0, 20.0];
+        autofit(&mut grid, &[(25.0, 25.0), (40.0, 40.0)], &table, 50.0);
+        assert_eq!(grid, [25.0, 40.0]);
+    }
+
+    #[test]
+    fn autofit_keeps_fitting_widths() {
+        let table = Table::new(1, 3, 120.0);
+        let mut grid = [30.0, 40.0, 50.0];
+        autofit(&mut grid, &[(10.0, 10.0), (20.0, 20.0), (30.0, 30.0)], &table, 120.0);
+        assert_eq!(grid, [30.0, 40.0, 50.0]);
     }
 }

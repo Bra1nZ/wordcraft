@@ -345,6 +345,7 @@ fn language_name(lang: wordcraft_engine::proof::ProofLang) -> &'static str {
         ProofLang::Tr => tl!("Turkish"),
         ProofLang::Ru => tl!("Russian"),
         ProofLang::Cs => tl!("Czech"),
+        ProofLang::Id => tl!("Indonesian"),
         // English uses its bundled word list; Bulgarian has no dictionary yet.
         ProofLang::En | ProofLang::Bg | ProofLang::Other => "",
     }
@@ -787,8 +788,8 @@ mod tests {
                         let bounds = text.visual_bounding_rect();
                         assert!(row.contains_rect(bounds.intersect(clip)), "{language} {percent}% {selected}: {label} paints outside {row:?}");
                         if language == "ru" && id == "accessibility" {
-                            assert_eq!(label, "Специальные возможности");
-                            assert!(bounds.right() > row.right(), "exercise a label wider than the row");
+                            assert_eq!(label, "Доступность");
+                            assert!(clip.contains_rect(bounds), "{language} {percent}% {selected}: {label} must fit its row");
                         }
                         if language == "en" && ["general", "display", "save"].contains(&id) {
                             assert!(clip.contains_rect(bounds), "short labels must remain fully visible");

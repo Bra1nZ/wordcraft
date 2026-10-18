@@ -215,8 +215,9 @@ fn content(app: &mut WordApp, ui: &mut egui::Ui, t: &Tokens) {
         let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
         let font = app.previews.font_shown(&font);
         let fams = app.previews.families();
+        let recent: Vec<String> = app.ui.recent_fonts.iter().map(|f| app.previews.font_shown(f)).collect();
         let prev = app.previews.font_preview_fn();
-        if let Some(f) = widgets::font_combo(ui, "mini_font", COMBO_FONT_W, &font, &fams, Some(&*prev)) {
+        if let Some(f) = widgets::font_combo_with_recent(ui, "mini_font", COMBO_FONT_W, &font, &fams, &recent, Some(&*prev)) {
             let _ = if f == crate::widgets::ADD_FONT {
                 app.run("font.add", json!({}))
             } else if f == crate::widgets::LOAD_SYSTEM_FONTS {

@@ -159,6 +159,7 @@
 	Apply to:	Übernehmen für:
 	Whole document	Gesamtes Dokument
 	This section	Dieser Abschnitt
+	Selected text	Markierter Text
 	Fill	Füllung
 	Setting:	Einstellung:
 	3-D	3D
@@ -510,6 +511,10 @@
 	Modify…	Ändern…
 	Move or Resize	Verschieben oder Größe ändern
 	Multilevel List	Mehrstufige Liste
+	Multilevel List Library	Bibliothek mehrstufiger Listen
+	Article I.	Artikel I.
+	Chapter 1	Kapitel 1
+	Section 1.01	Abschnitt 1.01
 	Multiple Pages	Mehrere Seiten
 	Name (A–Z)	Name (A–Z)
 	Name:	Name:
@@ -1526,6 +1531,8 @@
 	Math AutoCorrect	Math. AutoKorrektur
 	More >>	Mehr >>
 	Moves	Verschiebungen
+	Moved from:	Verschoben von:
+	Moved to:	Verschoben nach:
 	New document	Neues Dokument
 	No changes (read only)	Keine Änderungen (schreibgeschützt)
 	Only allow this kind of editing:	Nur diese Art der Bearbeitung zulassen:
@@ -2026,6 +2033,7 @@
 	Hyphenation zone:	Silbentrennzone:
 	Italian	Italienisch
 	Croatian	Kroatisch
+	Indonesian	Indonesisch
 	Japanese	Japanisch
 	Korean	Koreanisch
 	Limit consecutive hyphens to:	Aufeinanderfolgende Trennstriche begrenzen auf:
@@ -2232,3 +2240,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Schmal
 	Medium	Mittel
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Zellen vor dem Teilen verbinden
+	Table size	Tabellengröße
+	AutoFit behavior	Automatische Anpassung
+	Initial column width:	Anfangsspaltenbreite:
+	AutoFit to contents	An Inhalt anpassen
+	AutoFit to window	An Fenster anpassen
+	Separate text at	Text trennen bei
+	Commas	Kommas
+	Other:	Andere:
+	The number must be between 1 and {max}.	Die Zahl muss zwischen 1 und {max} liegen.
+	The measurement must be between {min} and {max}.	Das Maß muss zwischen {min} und {max} liegen.
+	Recently Used Fonts	Zuletzt verwendete Schriftarten
+	All Fonts	Alle Schriftarten
+	Spike	Sammlung
+	Insert Spike	Sammlung einfügen

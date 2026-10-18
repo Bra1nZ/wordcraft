@@ -144,6 +144,7 @@
 	Apply to:	Applica a:
 	Whole document	Tutto il documento
 	This section	Questa sezione
+	Selected text	Testo selezionato
 	Fill	Riempimento
 	Setting:	Impostazione:
 	3-D	3D
@@ -510,6 +511,10 @@
 	More templates →	Altri modelli →
 	Move or Resize	Sposta o ridimensiona
 	Multilevel List	Elenco a più livelli
+	Multilevel List Library	Raccolta elenchi a più livelli
+	Article I.	Articolo I.
+	Chapter 1	Capitolo 1
+	Section 1.01	Sezione 1.01
 	Multiple Pages	Più pagine
 	Name (A–Z)	Nome (A–Z)
 	Name:	Nome:
@@ -1593,6 +1598,8 @@
 	Math AutoCorrect	Correzione automatica formule
 	More >>	Altro >>
 	Moves	Spostamenti
+	Moved from:	Spostato da:
+	Moved to:	Spostato in:
 	New document	Nuovo documento
 	No changes (read only)	Nessuna modifica (sola lettura)
 	Only allow this kind of editing:	Consenti solo questo tipo di modifica:
@@ -2061,6 +2068,7 @@
 	Hyphenation zone:	Area di sillabazione:
 	Italian	Italiano
 	Croatian	Croato
+	Indonesian	Indonesiano
 	Japanese	Giapponese
 	Korean	Coreano
 	Limit consecutive hyphens to:	Limita trattini consecutivi a:
@@ -2641,3 +2649,19 @@ preview	Title	Esempio
 # Reading Mode column widths (#1040)
 	Narrow	Stretta
 	Medium	Media
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Unisci le celle prima di dividere
+	Table size	Dimensioni tabella
+	AutoFit behavior	Adattamento automatico
+	Initial column width:	Larghezza colonna iniziale:
+	AutoFit to contents	Adatta al contenuto
+	AutoFit to window	Adatta alla finestra
+	Separate text at	Separa il testo in corrispondenza di
+	Commas	Virgole
+	Other:	Altro:
+	The number must be between 1 and {max}.	Il numero deve essere compreso tra 1 e {max}.
+	The measurement must be between {min} and {max}.	La misura deve essere compresa tra {min} e {max}.
+	Recently Used Fonts	Caratteri usati di recente
+	All Fonts	Tutti i caratteri
+	Spike	Raccoglitore
+	Insert Spike	Inserisci raccoglitore

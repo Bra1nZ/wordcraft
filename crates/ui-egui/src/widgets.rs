@@ -227,18 +227,25 @@ pub fn split(
     let (r, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
     keytip_badge(ui, r, id, tip);
     let (ar, aresp) = ui.allocate_exact_size(vec2(11.0, 22.0), Sense::click());
+    let on = enabled(app, id);
     bg(ui, r, &resp, checked, &t);
     bg(ui, ar, &aresp, false, &t);
     let ic = Rect::from_center_size(r.center(), vec2(17.0, 17.0));
-    icons::paint(ui.painter(), ic, icon, t.icon, t.accent);
+    let (c, a) = if on { (t.icon, t.accent) } else { (t.text_disabled, t.text_disabled) };
+    icons::paint(ui.painter(), ic, icon, c, a);
     if let Some(sw) = swatch {
+        let sw = if on { sw } else { t.text_disabled };
         ui.painter().rect_filled(Rect::from_min_max(pos2(r.min.x + 4.0, r.max.y - 5.0), pos2(r.max.x - 4.0, r.max.y - 2.0)), 0.0, sw);
     }
-    icons::paint(ui.painter(), Rect::from_center_size(ar.center(), vec2(DROPDOWN, DROPDOWN)), "dropdown", t.icon, t.accent);
+    icons::paint(ui.painter(), Rect::from_center_size(ar.center(), vec2(DROPDOWN, DROPDOWN)), "dropdown", c, a);
     let resp = tooltip(app, resp, tip, id);
     command_menu(&resp, app, id);
-    if resp.clicked() {
+    if resp.clicked() && on {
         run_from_ribbon(app, id, params);
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, on, tip));
+    if !on {
+        return;
     }
     egui::Popup::menu(&aresp).show(|ui| {
         ui.set_min_width(180.0);
@@ -492,7 +499,7 @@ pub fn combo(
     items: &[String],
     preview: Option<&dyn Fn(&mut Ui, &str) -> Response>,
 ) -> Option<String> {
-    combo_impl(ui, id, width, current, items, preview, false)
+    combo_impl(ui, id, width, current, items, &[], preview, false)
 }
 
 /// What [`font_combo`] returns when its list's last entry, Add Font…, is chosen (#582): the
@@ -516,7 +523,24 @@ pub fn font_combo(
     items: &[String],
     preview: Option<&dyn Fn(&mut Ui, &str) -> Response>,
 ) -> Option<String> {
-    combo_impl(ui, id, width, current, items, preview, true)
+    combo_impl(ui, id, width, current, items, &[], preview, true)
+}
+
+/// [`font_combo`] with the `recent` families (most recent first) in a Recently Used Fonts
+/// section above the list, then All Fonts, as in Word (#2068). The sections show when nothing is
+/// typed; a query lists its matches only. Up/Down walk the recent entries, then the list; the
+/// headings are skipped. A recent font that is no longer installed stays listed and is applied as
+/// typed.
+pub fn font_combo_with_recent(
+    ui: &mut Ui,
+    id: &str,
+    width: f32,
+    current: &str,
+    items: &[String],
+    recent: &[String],
+    preview: Option<&dyn Fn(&mut Ui, &str) -> Response>,
+) -> Option<String> {
+    combo_impl(ui, id, width, current, items, recent, preview, true)
 }
 
 /// Indices of the `items` matching `query`, ignoring case: exact matches, then the names starting
@@ -554,8 +578,12 @@ struct ComboSearch {
     query: String,
     items_len: usize,
     matches: std::sync::Arc<Vec<usize>>,
-    /// Index into `matches`.
+    /// Index among the entries: the recent families shown, then `matches`.
     highlight: usize,
+    /// Up or Down moved the highlight since the query last changed.
+    moved: bool,
+    /// Rows the list drew last frame; 0 while it is hidden.
+    rows: usize,
     /// Where the list was drawn last frame, its scroll offset and visible height.
     popup: Option<Rect>,
     offset: f32,
@@ -568,6 +596,7 @@ fn combo_impl(
     width: f32,
     current: &str,
     items: &[String],
+    recent: &[String],
     preview: Option<&dyn Fn(&mut Ui, &str) -> Response>,
     search: bool,
 ) -> Option<String> {
@@ -612,8 +641,11 @@ fn combo_impl(
         if search && resp.changed() {
             s.open = true;
             s.highlight = 0;
+            s.moved = false;
             reveal = true;
         }
+        // The recent section shows while nothing is typed; a query lists its matches only.
+        let recent_shown: &[String] = if text.trim().is_empty() { recent } else { &[] };
         let mut regain_focus = false;
         if s.open {
             if s.query != text || s.items_len != items.len() {
@@ -621,7 +653,8 @@ fn combo_impl(
                 s.query = text.clone();
                 s.items_len = items.len();
             }
-            let last = s.matches.len().saturating_sub(1);
+            let last = recent_shown.len().saturating_add(s.matches.len()).saturating_sub(1);
+            s.moved |= step != 0;
             s.highlight = match step {
                 1.. => s.highlight.saturating_add(1),
                 0 => s.highlight,
@@ -629,9 +662,12 @@ fn combo_impl(
             }
             .min(last);
             if enter {
-                let picked = s.matches.get(s.highlight).and_then(|&i| items.get(i));
+                let picked = recent_shown
+                    .get(s.highlight)
+                    .or_else(|| s.highlight.checked_sub(recent_shown.len()).and_then(|k| s.matches.get(k)).and_then(|&i| items.get(i)));
+                // A cleared box commits as typed (nothing) unless Up or Down picked an entry.
                 out = Some(match picked {
-                    Some(name) if !text.trim().is_empty() => name.clone(),
+                    Some(name) if !text.trim().is_empty() || s.moved => name.clone(),
                     _ => text.clone(),
                 });
                 s.open = false;
@@ -659,8 +695,12 @@ fn combo_impl(
         ui.painter().set(arrow_bg, arrow_box);
         icons::paint(ui.painter(), Rect::from_center_size(ar.center(), vec2(DROPDOWN, DROPDOWN)), "dropdown", t.icon, t.accent);
         // The list drops from the box's left edge, as in Word, not from the arrow (#535).
-        egui::Popup::menu(&aresp).anchor(resp.rect.union(ar)).show(|ui| {
-            if let Some(v) = combo_list(ui, width, current, items, preview) {
+        // The font list closes on a chosen entry or a click outside it, not on its headings.
+        let close = if search { egui::PopupCloseBehavior::CloseOnClickOutside } else { egui::PopupCloseBehavior::CloseOnClick };
+        egui::Popup::menu(&aresp).anchor(resp.rect.union(ar)).close_behavior(close).show(|ui| {
+            let item = |k: usize| items.get(k);
+            let row = |k: usize| section_row(k, recent, &item);
+            if let Some(v) = list_rows(ui, width, current, section_rows(recent.len(), items.len()), &row, None, None, preview).0 {
                 out = Some(v);
                 ui.close();
             }
@@ -677,14 +717,27 @@ fn combo_impl(
                 }
             }
         });
-        if s.open && !s.matches.is_empty() {
+        let n = section_rows(recent_shown.len(), s.matches.len());
+        if s.open && n > 0 {
             let matches = s.matches.clone();
             let scroll = reveal.then_some((s.offset, s.view_h));
-            let shown = egui::Area::new(search_id.with("list")).order(egui::Order::Tooltip).fixed_pos(resp.rect.left_bottom()).show(ui.ctx(), |ui| {
+            let lit = highlight_row(s.highlight, recent_shown.len());
+            // A list of a new length is sized again (an area keeps its last size, so a list that
+            // once held one match stayed one row tall). That pass draws nothing, so it is
+            // discarded and the frame drawn again, as egui does for its own sizing passes.
+            let list_id = search_id.with("list");
+            let resize = n != s.rows;
+            if resize || egui::AreaState::load(ui.ctx(), list_id).is_none() {
+                ui.ctx().request_discard("font list resized");
+            }
+            s.rows = n;
+            let area = egui::Area::new(list_id).order(egui::Order::Tooltip).fixed_pos(resp.rect.left_bottom()).sizing_pass(resize);
+            let shown = area.show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style())
                     .show(ui, |ui| {
                         let item = |k: usize| matches.get(k).and_then(|&i| items.get(i));
-                        list_rows(ui, width, current, matches.len(), &item, Some(s.highlight), scroll, preview)
+                        let row = |k: usize| section_row(k, recent_shown, &item);
+                        list_rows(ui, width, current, n, &row, Some(lit), scroll, preview)
                     })
                     .inner
             });
@@ -699,6 +752,7 @@ fn combo_impl(
             }
         } else {
             s.popup = None;
+            s.rows = 0;
         }
         if regain_focus && s.open {
             ui.memory_mut(|m| m.request_focus(te_id));
@@ -725,10 +779,67 @@ pub const COMBO_PREVIEW_ROW_H: f32 = 24.0;
 /// family and each preview loads that font, so building all rows loaded every font on the system
 /// (gigabytes on large font collections) and froze the app (#121).
 pub fn combo_list(ui: &mut Ui, width: f32, current: &str, items: &[String], preview: Option<&dyn Fn(&mut Ui, &str) -> Response>) -> Option<String> {
-    list_rows(ui, width, current, items.len(), &|k| items.get(k), None, None, preview).0
+    list_rows(ui, width, current, items.len(), &|k| items.get(k).map(Row::Item), None, None, preview).0
 }
 
-/// The rows of [`combo_list`], virtualised, for `n` items fetched by index. With a `highlight`
+/// A row of a combo's list: a dim section heading nothing picks, or an entry.
+enum Row<'a> {
+    Heading(&'a str),
+    Item(&'a String),
+}
+
+/// Rows in a list of `n` entries headed by `recent` recent ones: the two headings and the recent
+/// entries come on top when there are any.
+fn section_rows(recent: usize, n: usize) -> usize {
+    if recent == 0 { n } else { n.saturating_add(recent).saturating_add(2) }
+}
+
+/// Row `k` of a list headed by the `recent` families: Recently Used Fonts, those families, All
+/// Fonts, then `item(0..)`. Without recent families the rows are the items.
+fn section_row<'a>(k: usize, recent: &'a [String], item: &dyn Fn(usize) -> Option<&'a String>) -> Option<Row<'a>> {
+    if recent.is_empty() {
+        return item(k).map(Row::Item);
+    }
+    if k == 0 {
+        return Some(Row::Heading(tl!("Recently Used Fonts")));
+    }
+    if let Some(r) = recent.get(k.saturating_sub(1)) {
+        return Some(Row::Item(r));
+    }
+    if k == recent.len().saturating_add(1) {
+        return Some(Row::Heading(tl!("All Fonts")));
+    }
+    item(k.saturating_sub(recent.len()).saturating_sub(2)).map(Row::Item)
+}
+
+/// The row of entry `entry` in a list headed by `recent` recent families ([`section_row`]).
+fn highlight_row(entry: usize, recent: usize) -> usize {
+    if recent == 0 {
+        entry
+    } else if entry < recent {
+        entry.saturating_add(1)
+    } else {
+        entry.saturating_add(2)
+    }
+}
+
+/// A section heading's row of `size`: dim text, a rule across the list above it after the
+/// first row, nothing to click. The row asks for no more than `size`: the list's width is its
+/// entries' (a sizing pass offers an unbounded width).
+fn heading_row(ui: &mut Ui, text: &str, size: egui::Vec2, rule: bool) {
+    let weak = ui.visuals().weak_text_color();
+    let line = ui.visuals().widgets.noninteractive.bg_stroke;
+    if rule {
+        ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), line);
+    }
+    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(size);
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(egui::RichText::new(text).small().color(weak)).selectable(false));
+    });
+}
+
+/// The rows of [`combo_list`], virtualised, for `n` rows fetched by index. With a `highlight`
 /// that row is marked instead of `current`; `scroll` (last frame's offset and visible height)
 /// scrolls the highlight into view. Returns the clicked item, the scroll offset and the height.
 fn list_rows<'a>(
@@ -736,14 +847,16 @@ fn list_rows<'a>(
     width: f32,
     current: &str,
     n: usize,
-    item: &dyn Fn(usize) -> Option<&'a String>,
+    row: &dyn Fn(usize) -> Option<Row<'a>>,
     highlight: Option<usize>,
     scroll: Option<(f32, f32)>,
     preview: Option<&dyn Fn(&mut Ui, &str) -> Response>,
 ) -> (Option<String>, f32, f32) {
     let mut out = None;
     let row_h = if preview.is_some() { COMBO_PREVIEW_ROW_H } else { ui.spacing().interact_size.y };
-    let mut area = egui::ScrollArea::vertical().max_height(420.0);
+    let desired_h = (n as f32 * (row_h + ui.spacing().item_spacing.y)).min(420.0);
+    ui.set_min_height(desired_h);
+    let mut area = egui::ScrollArea::vertical().max_height(desired_h);
     if let (Some(h), Some((offset, view_h))) = (highlight, scroll) {
         let top = h as f32 * (row_h + ui.spacing().item_spacing.y);
         let bottom = top + row_h;
@@ -760,7 +873,14 @@ fn list_rows<'a>(
     let shown = area.show_rows(ui, row_h, n, |ui, range| {
         ui.set_min_width(width + 60.0);
         for k in range {
-            let Some(it) = item(k) else { continue };
+            let it = match row(k) {
+                Some(Row::Item(it)) => it,
+                Some(Row::Heading(h)) => {
+                    heading_row(ui, h, vec2(width + 60.0, row_h), k > 0);
+                    continue;
+                }
+                None => continue,
+            };
             let lit = highlight == Some(k);
             let clicked = match preview {
                 Some(p) => {
@@ -840,21 +960,40 @@ pub fn icon_button(ui: &mut Ui, icon: &str, tip: &str) -> Response {
 /// fonts and would draw as empty boxes, so icons are painted (`icons.rs`) rather than typed.
 /// It looks and reacts like `ui.button` (see [`drawn_state`]).
 pub fn icon_text_button(ui: &mut Ui, icon: &str, text: &str, font: egui::FontId) -> Response {
-    icon_text_button_with(ui, icon, text, font, false)
+    icon_text_button_with(ui, icon, text, font, false, true)
 }
 
 /// [`icon_text_button`] that opens a menu: the drop-down marker follows the text.
 pub fn icon_text_menu_button(ui: &mut Ui, icon: &str, text: &str, font: egui::FontId) -> Response {
-    icon_text_button_with(ui, icon, text, font, true)
+    icon_text_button_with(ui, icon, text, font, true, true)
 }
 
-fn icon_text_button_with(ui: &mut Ui, icon: &str, text: &str, font: egui::FontId, marker: bool) -> Response {
+/// The icon-only form of [`icon_text_button`] / [`icon_text_menu_button`] for a crowded strip
+/// (#2026): `label` is the accessible name and the tooltip, not drawn.
+pub fn icon_only_button(ui: &mut Ui, icon: &str, label: &str, font: egui::FontId, marker: bool) -> Response {
+    icon_text_button_with(ui, icon, label, font, marker, false).on_hover_text(label)
+}
+
+/// Width [`icon_text_button`] (or its menu / icon-only forms) takes.
+pub fn icon_text_button_width(ui: &Ui, text: &str, font: egui::FontId, marker: bool, show_text: bool) -> f32 {
+    let text_w = if show_text { ui.ctx().fonts_mut(|f| f.layout_no_wrap(text.to_string(), font, Color32::PLACEHOLDER).size().x) } else { 0.0 };
+    icon_text_button_size(ui, text_w, marker, show_text)
+}
+
+fn icon_text_button_size(ui: &Ui, text_w: f32, marker: bool, show_text: bool) -> f32 {
+    let pad = ui.spacing().button_padding;
+    let gap = if show_text { 4.0 } else { 0.0 };
+    let marker_w = if marker { DROPDOWN + 4.0 } else { 0.0 };
+    pad.x + 16.0 + gap + text_w + marker_w + pad.x
+}
+
+fn icon_text_button_with(ui: &mut Ui, icon: &str, text: &str, font: egui::FontId, marker: bool, show_text: bool) -> Response {
     let t = Tokens::get(ui.ctx());
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, Color32::PLACEHOLDER);
     let pad = ui.spacing().button_padding;
     let icon_w = 16.0;
-    let marker_w = if marker { DROPDOWN + 4.0 } else { 0.0 };
-    let size = vec2(pad.x + icon_w + 4.0 + galley.size().x + marker_w + pad.x, galley.size().y.max(icon_w) + 2.0 * pad.y);
+    let text_w = if show_text { galley.size().x } else { 0.0 };
+    let size = vec2(icon_text_button_size(ui, text_w, marker, show_text), galley.size().y.max(icon_w) + 2.0 * pad.y);
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
     let st = drawn_state(ui, &resp, true);
@@ -867,9 +1006,10 @@ fn icon_text_button_with(ui: &mut Ui, icon: &str, text: &str, font: egui::FontId
         t.icon,
         t.accent,
     );
-    let text_x = r.min.x + pad.x + icon_w + 4.0;
-    let text_w = galley.size().x;
-    ui.painter().galley(pos2(text_x, r.center().y - galley.size().y / 2.0), galley, st.text);
+    let text_x = r.min.x + pad.x + icon_w + if show_text { 4.0 } else { 0.0 };
+    if show_text {
+        ui.painter().galley(pos2(text_x, r.center().y - galley.size().y / 2.0), galley, st.text);
+    }
     if marker {
         let c = pos2(text_x + text_w + 4.0 + DROPDOWN / 2.0, r.center().y);
         icons::paint(ui.painter(), Rect::from_center_size(c, vec2(DROPDOWN, DROPDOWN)), "dropdown", st.text, st.text);
@@ -959,6 +1099,11 @@ mod tests {
 
     /// Focuses a fresh combo, types `typed`, presses `keys` (one per frame) and returns its value.
     fn type_into_combo(search: bool, items: &[String], typed: &str, keys: &[egui::Key]) -> Option<String> {
+        type_into(search, items, &[], typed, keys)
+    }
+
+    /// [`type_into_combo`] for a font box headed by the `recent` families.
+    fn type_into(search: bool, items: &[String], recent: &[String], typed: &str, keys: &[egui::Key]) -> Option<String> {
         let ctx = egui::Context::default();
         let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
         let mut frames = vec![vec![], vec![egui::Event::Text(typed.into())]];
@@ -969,7 +1114,7 @@ mod tests {
                 if n == 0 {
                     ui.memory_mut(|m| m.request_focus(ui.id().with(("combo_edit", "f"))));
                 }
-                let v = if search { font_combo(ui, "f", 150.0, "", items, None) } else { combo(ui, "f", 150.0, "", items, None) };
+                let v = if search { font_combo_with_recent(ui, "f", 150.0, "", items, recent, None) } else { combo(ui, "f", 150.0, "", items, None) };
                 out = out.take().or(v);
             })
             .drop_without_applying_deltas();
@@ -990,6 +1135,121 @@ mod tests {
         assert_eq!(type_into_combo(true, &fonts, "arial", &[Escape]), None);
         let sizes: Vec<String> = ["10", "11", "12"].map(String::from).to_vec();
         assert_eq!(type_into_combo(false, &sizes, "1", &[Enter]).as_deref(), Some("1"));
+    }
+
+    /// #2068: with nothing typed, the recent families head the list and Enter applies the one
+    /// highlighted; Down walks past them into All Fonts; a query lists its matches only.
+    #[test]
+    fn recent_fonts_head_the_typed_list() {
+        use egui::Key::{ArrowDown, ArrowUp, Backspace, Enter};
+        let fonts: Vec<String> = ["Arial", "Arial Black", "Courier New", "Times New Roman"].map(String::from).to_vec();
+        let recent: Vec<String> = ["Georgia", "Courier New"].map(String::from).to_vec();
+        // Typing, then clearing the box, leaves the list open on the recent fonts. Enter alone
+        // applies nothing the user didn't pick; Down picks the second recent font.
+        assert_eq!(type_into(true, &fonts, &recent, "x", &[Backspace, Enter]).as_deref(), Some(""));
+        assert_eq!(type_into(true, &fonts, &recent, "x", &[Backspace, ArrowDown, ArrowUp, Enter]).as_deref(), Some("Georgia"));
+        assert_eq!(type_into(true, &fonts, &recent, "x", &[Backspace, ArrowDown, Enter]).as_deref(), Some("Courier New"));
+        // Past the recent entries comes All Fonts; the headings are skipped.
+        assert_eq!(type_into(true, &fonts, &recent, "x", &[Backspace, ArrowDown, ArrowDown, Enter]).as_deref(), Some("Arial"));
+        // A query lists the matching installed families only.
+        assert_eq!(type_into(true, &fonts, &recent, "cour", &[Enter]).as_deref(), Some("Courier New"));
+        assert_eq!(type_into(true, &fonts, &recent, "arial", &[ArrowDown, Enter]).as_deref(), Some("Arial Black"));
+        // Nothing recent, nothing typed and no key moved the highlight: the text is committed as before.
+        assert_eq!(type_into(true, &fonts, &[], "x", &[Backspace, Enter]).as_deref(), Some(""));
+    }
+
+    /// The typed list once held one match and stayed one row tall when the query then matched
+    /// many: an area keeps its last size unless a changed query sizes it again.
+    #[test]
+    fn the_typed_list_grows_when_the_query_matches_more() {
+        let fonts: Vec<String> = ["Arial", "Arial Black", "Courier New", "Times New Roman"].map(String::from).to_vec();
+        let recent: Vec<String> = ["Georgia", "Courier New"].map(String::from).to_vec();
+        let ctx = egui::Context::default();
+        let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let erase = || vec![key(egui::Key::Backspace)];
+        let frames = vec![vec![], vec![egui::Event::Text("cour".into())], vec![], erase(), erase(), erase(), erase(), vec![]];
+        let mut area = None;
+        let mut heights = Vec::new();
+        for (n, events) in frames.into_iter().enumerate() {
+            ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                if n == 0 {
+                    ui.memory_mut(|m| m.request_focus(ui.id().with(("combo_edit", "f"))));
+                }
+                area = Some(ui.id().with(("combo_search", "f")).with("list"));
+                font_combo_with_recent(ui, "f", 150.0, "", &fonts, &recent, None);
+            })
+            .drop_without_applying_deltas();
+            heights.push(area.and_then(|id| egui::AreaState::load(&ctx, id)).and_then(|s| s.size).map(|s| s.y));
+        }
+        let one = heights[2].expect("one match listed");
+        let all = heights[7].expect("every font listed");
+        assert!(all > 4.0 * one, "one match: {one} tall; two headings, two recent and four fonts: {all}");
+    }
+
+    /// The typed list was built invisibly (a sizing pass) on each keystroke that changed its
+    /// length, so it blinked out for a frame. It is drawn on the keystroke's own frame.
+    #[test]
+    fn the_typed_list_shows_on_the_frame_of_the_keystroke() {
+        fn has_text(shape: &egui::Shape, s: &str) -> bool {
+            match shape {
+                egui::Shape::Text(t) => t.galley.text() == s,
+                egui::Shape::Vec(v) => v.iter().any(|x| has_text(x, s)),
+                _ => false,
+            }
+        }
+        let fonts: Vec<String> = ["Arial", "Arial Black", "Courier New", "Times New Roman"].map(String::from).to_vec();
+        let recent: Vec<String> = ["Georgia", "Courier New"].map(String::from).to_vec();
+        let ctx = egui::Context::default();
+        let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let erase = || vec![key(egui::Key::Backspace)];
+        // Each keystroke and a row the list must draw on that frame: one match, the four
+        // queries on the way back to a cleared box (whose list shows the recent fonts), then two
+        // matches. The field itself shows only the typed text.
+        let frames = [
+            (vec![egui::Event::Text("cour".into())], "Courier New"),
+            (erase(), "Courier New"),
+            (erase(), "Courier New"),
+            (erase(), "Arial Black"),
+            (erase(), "Recently Used Fonts"),
+            (vec![egui::Event::Text("ar".into())], "Arial Black"),
+        ];
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.memory_mut(|m| m.request_focus(ui.id().with(("combo_edit", "f"))));
+            font_combo_with_recent(ui, "f", 150.0, "", &fonts, &recent, None);
+        })
+        .drop_without_applying_deltas();
+        for (n, (events, row)) in frames.into_iter().enumerate() {
+            let out = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+                font_combo_with_recent(ui, "f", 150.0, "", &fonts, &recent, None);
+            });
+            let drawn = out.shapes.iter().any(|c| has_text(&c.shape, row));
+            out.drop_without_applying_deltas();
+            assert!(drawn, "keystroke {n}: {row} is drawn");
+        }
+    }
+
+    /// The rows of a sectioned font list, and where the keyboard highlight lands among them.
+    #[test]
+    fn font_list_sections_skip_their_headings() {
+        let items: Vec<String> = ["Arial", "Courier New"].map(String::from).to_vec();
+        let recent: Vec<String> = ["Georgia"].map(String::from).to_vec();
+        fn names<'a>(items: &'a [String], recent: &'a [String], n: usize) -> Vec<String> {
+            let item = |k: usize| items.get(k);
+            (0..n)
+                .map(|k| match section_row(k, recent, &item) {
+                    Some(Row::Heading(h)) => format!("[{h}]"),
+                    Some(Row::Item(i)) => i.clone(),
+                    None => "-".into(),
+                })
+                .collect()
+        }
+        assert_eq!(section_rows(1, 2), 5);
+        assert_eq!(names(&items, &recent, 6), ["[Recently Used Fonts]", "Georgia", "[All Fonts]", "Arial", "Courier New", "-"]);
+        assert_eq!([highlight_row(0, 1), highlight_row(1, 1), highlight_row(2, 1)], [1, 3, 4]);
+        // Nothing recent: no headings, the rows are the items.
+        assert_eq!(section_rows(0, 2), 2);
+        assert_eq!(names(&items, &[], 3), ["Arial", "Courier New", "-"]);
+        assert_eq!(highlight_row(1, 0), 1);
     }
 
     /// The field was rounded on all four corners and the arrow on none, so the two looked apart,

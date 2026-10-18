@@ -193,6 +193,7 @@
 	Use the Insert key to switch overtype on and off	Usar a tecla Insert para ativar e desativar a sobrescrita
 	Whole document	Documento inteiro
 	This section	Esta seção
+	Selected text	Texto selecionado
 	Fill	Cor de fundo
 	Setting:	Tipo:
 	3-D	3D
@@ -568,6 +569,10 @@
 	Modify…	Modificar…
 	Move or Resize	Mover ou redimensionar
 	Multilevel List	Lista de vários níveis
+	Multilevel List Library	Biblioteca de listas de vários níveis
+	Article I.	Artigo I.
+	Chapter 1	Capítulo 1
+	Section 1.01	Seção 1.01
 	Multiple Pages	Várias páginas
 	Name (A–Z)	Nome (A–Z)
 	Name:	Nome:
@@ -1495,6 +1500,8 @@
 	Math AutoCorrect	Autocorreção de matemática
 	More >>	Mais >>
 	Moves	Movimentações
+	Moved from:	Movido de:
+	Moved to:	Movido para:
 	New document	Novo documento
 	No changes (read only)	Sem alterações (somente leitura)
 	Only allow this kind of editing:	Permitir somente este tipo de edição:
@@ -2057,6 +2064,7 @@
 	Hyphenation zone:	Zona de hifenização:
 	Italian	Italiano
 	Croatian	Croata
+	Indonesian	Indonésio
 	Japanese	Japonês
 	Korean	Coreano
 	Limit consecutive hyphens to:	Limitar hífens consecutivos a:
@@ -2245,3 +2253,19 @@
 # Reading Mode column widths (#1040)
 	Narrow	Estreita
 	Medium	Média
+# Split Cells and Convert Text to Table (#2592)
+	Merge cells before split	Mesclar células antes de dividir
+	Table size	Tamanho da tabela
+	AutoFit behavior	Comportamento de autoajuste
+	Initial column width:	Largura inicial da coluna:
+	AutoFit to contents	Autoajustar ao conteúdo
+	AutoFit to window	Autoajustar à janela
+	Separate text at	Separar texto em
+	Commas	Vírgulas
+	Other:	Outro:
+	The number must be between 1 and {max}.	O número deve estar entre 1 e {max}.
+	The measurement must be between {min} and {max}.	A medida deve estar entre {min} e {max}.
+	Recently Used Fonts	Fontes usadas recentemente
+	All Fonts	Todas as fontes
+	Spike	Coletor
+	Insert Spike	Inserir coletor
