@@ -230,13 +230,22 @@ fn gost_indented(text: &str) -> Paragraph {
 /// A structural-element heading (РЕФЕРАТ, СОДЕРЖАНИЕ, ВВЕДЕНИЕ, …): centred, bold, in
 /// capital letters, one-and-a-half spacing, from a new page as GOST 7.32 requires.
 fn gost_heading(text: &str) -> Paragraph {
-    let mut p = Paragraph::with_text(
-        text,
-        CharProps { style: Some("Heading1".into()), bold: Some(true), size: Some(14.0), ..gost_body() },
-    );
+    let mut p = Paragraph::with_text(text, CharProps { style: Some("Heading1".into()), bold: Some(true), size: Some(14.0), ..gost_body() });
     p.props.align = Some(Align::Center);
     p.props.line_spacing = Some(LineSpacing::Multiple(1.5));
     p.props.page_break_before = Some(true);
+    p
+}
+
+/// A numbered section or subsection heading (GOST 7.32-2017 §6.2.3): from the paragraph
+/// indent, after the number, in bold with an initial capital — not centred (that is for
+/// structural elements), no trailing dot. Sections start on a new page (§6.2.1),
+/// subsections flow on.
+fn gost_section(text: &str, level: &str, new_page: bool) -> Paragraph {
+    let mut p = Paragraph::with_text(text, CharProps { style: Some(level.into()), bold: Some(true), size: Some(14.0), ..gost_body() });
+    p.props.line_spacing = Some(LineSpacing::Multiple(1.5));
+    p.props.indent_first = Some(1.25 * 72.0 / 25.4);
+    p.props.page_break_before = Some(new_page);
     p
 }
 
@@ -268,9 +277,7 @@ pub fn gost_report() -> Document {
     // РЕФЕРАТ: what the report holds, the keywords, then the abstract itself.
     b.push(Block::Para(gost_heading("РЕФЕРАТ")));
     b.push(Block::Para(gost_indented("Отчёт содержит N с., N рис., N табл., N источников, N прил.")));
-    b.push(Block::Para(gost_indented(
-        "Перечислите от пяти до пятнадцати ключевых слов или словосочетаний из текста отчёта прописными буквами.",
-    )));
+    b.push(Block::Para(gost_indented("Перечислите от пяти до пятнадцати ключевых слов или словосочетаний из текста отчёта прописными буквами.")));
     b.push(Block::Para(gost_indented("Объект исследования — опишите, что изучается.")));
     b.push(Block::Para(gost_indented("Цель работы — сформулируйте, что должно быть достигнуто.")));
     b.push(Block::Para(gost_indented("Методы работы — перечислите применённые методы и средства.")));
@@ -282,12 +289,13 @@ pub fn gost_report() -> Document {
     b.push(Block::Para(gost_heading("ВВЕДЕНИЕ")));
     b.push(Block::Para(gost_indented("Обоснуйте актуальность темы и современное состояние вопроса.")));
     b.push(Block::Para(gost_indented("Сформулируйте цель и задачи работы, объект и методы исследования.")));
-    // Numbered sections with a subsection, per GOST's decimal numbering.
-    b.push(Block::Para(gost_heading("1 МЕТОДЫ ИССЛЕДОВАНИЯ")));
+    // Numbered sections with a subsection: headings from the paragraph indent, with an
+    // initial capital (§6.2.3), unlike the centred structural elements.
+    b.push(Block::Para(gost_section("1 Методы исследования", "Heading1", true)));
     b.push(Block::Para(gost_indented("Опишите применённые методы, оборудование и материалы.")));
-    b.push(Block::Para(gost_para("1.1 Методика измерений", Align::Left)));
+    b.push(Block::Para(gost_section("1.1 Методика измерений", "Heading2", false)));
     b.push(Block::Para(gost_indented("Изложите методику измерений и условия их проведения.")));
-    b.push(Block::Para(gost_heading("2 РЕЗУЛЬТАТЫ И ИХ ОБСУЖДЕНИЕ")));
+    b.push(Block::Para(gost_section("2 Результаты и их обсуждение", "Heading1", true)));
     b.push(Block::Para(gost_indented("Изложите полученные результаты и сопоставьте их с известными.")));
     // ЗАКЛЮЧЕНИЕ and the sources.
     b.push(Block::Para(gost_heading("ЗАКЛЮЧЕНИЕ")));
@@ -298,6 +306,8 @@ pub fn gost_report() -> Document {
     d.body = b.into_iter().map(std::sync::Arc::new).collect();
     // A4 with GOST margins: 30 mm on the left for binding, 15 mm on the right, 20 mm top and bottom.
     let s = &mut d.last_section;
+    // The title page counts in the page numbering but carries no number (§6.3.1).
+    s.title_page = true;
     s.page_w = 210.0 * MM;
     s.page_h = 297.0 * MM;
     s.margin_top = 20.0 * MM;
