@@ -256,11 +256,8 @@ pub fn gost_report() -> Document {
     const MM: f32 = 72.0 / 25.4;
     let mut d = Document::new();
     d.core.title = "Отчёт о научно-исследовательской работе".into();
-    let mut b: Vec<Block> = Vec::new();
-    // Title page: the organisation on top, the report type in the middle, the city and
-    // year at the bottom.
-    b.push(Block::Para(gost_para("НАИМЕНОВАНИЕ ОРГАНИЗАЦИИ", Align::Center)));
-    b.push(Block::Para(para("")));
+    let mut b: Vec<Block> = vec![Block::Para(gost_para("НАИМЕНОВАНИЕ ОРГАНИЗАЦИИ", Align::Center)), Block::Para(para(""))];
+    // Title page: the report type in the middle, the city and year at the bottom.
     b.push(Block::Para(gost_para("ОТЧЁТ", Align::Center)));
     b.push(Block::Para(gost_para("О НАУЧНО-ИССЛЕДОВАТЕЛЬСКОЙ РАБОТЕ", Align::Center)));
     b.push(Block::Para(gost_para("на тему: «Наименование темы»", Align::Center)));
