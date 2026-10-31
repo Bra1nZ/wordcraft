@@ -1060,6 +1060,7 @@ Footer page-table height and body wrapping are corrected. Other pagination gaps 
 | 2026-10-28 | trivial | Progress log: chart and SmartArt text the font lacks is drawn in a fallback face (#4720) |
 | 2026-10-29 | trivial | Progress log: corporate authors in bibliographies (#4848) |
 | 2026-10-30 | trivial | get_text omits hidden runs; select.text skips hidden occurrences unless includeHidden (PR #4993) |
+| 2026-10-31 | trivial | select.text ends a projection match at the last matched visible character, so an edit never reaches into hidden text before the next visible one (PR #4993) |
 | 2026-10-29 | trivial | Progress log: Table Properties follows the selection (#4857) |
 | 2026-10-27 | trivial | Progress log: AutoCorrect Options with no document open (#4585) |
 | 2026-10-28 | trivial | Progress log: RTF metafile pictures are imported (#4259) |
